@@ -1,23 +1,22 @@
-"""Demonstrate relevant and unrelated mock web searches."""
+"""Demonstrate the empty V1 web-search adapter behavior."""
 
 from tools.web_search import WebSearchTool
 
 
 def main() -> None:
-    """Run and print the two requested mock web-search scenarios."""
+    """Verify that all queries return no results without a real provider."""
     tool = WebSearchTool()
 
-    for query in ["CNC 刀具管理 tool life", "完全无关内容"]:
-        print(f"query: {query}")
+    queries = [
+        "CNC 刀具管理 tool life",
+        "石材荒料加工流程",
+        "库存管理系统",
+    ]
+    for query in queries:
         results = tool.search(query)
-        if not results:
-            print("results: []")
-            continue
-
-        for result in results:
-            print("title:", result.title)
-            print("snippet:", result.snippet)
-            print("source:", result.source)
+        assert results == [], f"Expected no web results for query: {query}"
+        print(f"query: {query}")
+        print("results: []")
 
 
 if __name__ == "__main__":

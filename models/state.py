@@ -1,6 +1,7 @@
 """Core state models for the PM Copilot agent workflow."""
 
 from enum import Enum
+from datetime import datetime, timezone
 
 from pydantic import BaseModel, Field
 
@@ -40,6 +41,28 @@ class TaskContext(BaseModel):
     known_facts: list[str] = Field(default_factory=list)
     missing_information: list[str] = Field(default_factory=list)
     assumptions: list[str] = Field(default_factory=list)
+    knowledge_group_ids: list[str] = Field(default_factory=list)
+    created_at: str = Field(
+        default_factory=lambda: datetime.now(timezone.utc).isoformat()
+    )
+    updated_at: str = Field(
+        default_factory=lambda: datetime.now(timezone.utc).isoformat()
+    )
+    plan_version: int = 1
+
+
+class ReviewFeedback(BaseModel):
+    """Records feedback that produced a new review-ready plan version."""
+
+    version: int
+    version_from: int | None = None
+    version_to: int | None = None
+    feedback: str
+    created_at: str = Field(
+        default_factory=lambda: datetime.now(timezone.utc).isoformat()
+    )
+    revision_summary: list[str] = Field(default_factory=list)
+    revision_type: str = "review_feedback"
 
 
 class PlanStep(BaseModel):
@@ -107,3 +130,4 @@ class AgentState(BaseModel):
     decisions: list[Decision] = Field(default_factory=list)
     analysis: ProductAnalysis | None = None
     final_output: FinalProductPlan | None = None
+    review_feedback: list[ReviewFeedback] = Field(default_factory=list)

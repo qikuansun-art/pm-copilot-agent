@@ -3,9 +3,12 @@
 from agent.requirement_understanding import RequirementUnderstandingService
 from agent.planner import PMPlanner
 from agent.product_analyzer import ProductAnalyzer
+from agent.research_planner import ResearchPlanner
 from agent.finalizer import ProductPlanFinalizer
-from models.state import AgentStage, AgentState, Message
-from models.state import Decision, Evidence, ToolCall
+from agent.plan_reviser import ProductPlanReviser
+from models.research import ResearchPlan
+from models.state import AgentStage, AgentState, Message, ReviewFeedback
+from models.state import Evidence, ToolCall
 from tools.knowledge_search import KnowledgeSearchTool
 from tools.web_search import WebSearchTool
 
@@ -17,10 +20,12 @@ class PMCopilotRuntime:
         """Initialize the runtime's requirement-understanding service."""
         self.requirement_understanding = RequirementUnderstandingService()
         self.planner = PMPlanner()
+        self.research_planner = ResearchPlanner()
         self.knowledge_search = KnowledgeSearchTool()
         self.web_search = WebSearchTool()
         self.product_analyzer = ProductAnalyzer()
         self.finalizer = ProductPlanFinalizer()
+        self.plan_reviser = ProductPlanReviser()
 
     def start_task(self, state: AgentState) -> AgentState:
         """Run requirement understanding and advance the supplied task state."""
@@ -33,7 +38,7 @@ class PMCopilotRuntime:
         state.task.known_facts = result.known_facts
         state.task.missing_information = result.missing_information
 
-        if result.need_clarification:
+        if result.need_clarification and result.questions:
             state.task.current_stage = AgentStage.WAITING_CLARIFICATION
             for item in result.questions:
                 state.messages.append(
@@ -47,6 +52,13 @@ class PMCopilotRuntime:
 
         return state
 
+    def create_research_plan(self, state: AgentState) -> ResearchPlan:
+        """Create and return research queries for a researching task."""
+        if state.task.current_stage != AgentStage.RESEARCHING:
+            raise ValueError("Task is not in the researching stage")
+
+        return self.research_planner.create_research_plan(state)
+
     def run_internal_research(
         self,
         state: AgentState,
@@ -56,12 +68,24 @@ class PMCopilotRuntime:
         if state.task.current_stage != AgentStage.RESEARCHING:
             raise ValueError("Task is not in the researching stage")
 
-        results = self.knowledge_search.search(query)
+        results = self.knowledge_search.search(
+            query,
+            knowledge_group_ids=state.task.knowledge_group_ids,
+        )
+        formatted_results = "\n\n".join(
+            f"[{item.source_type}] {item.source}\n"
+            f"{item.content}\n"
+            f"score: {item.score:.2f}"
+            for item in results
+        )
+        readable_results = f"query: {query}"
+        if formatted_results:
+            readable_results = f"{readable_results}\n\n{formatted_results}"
         state.tool_calls.append(
             ToolCall(
                 tool_name="knowledge_search",
                 input={"query": query},
-                result="\n".join(results),
+                result=readable_results,
                 status="completed",
             )
         )
@@ -69,10 +93,16 @@ class PMCopilotRuntime:
         for item in results:
             state.evidence.append(
                 Evidence(
-                    content=item,
-                    source_type="knowledge",
-                    source="knowledge/cnc_context.md",
-                    confidence="high",
+                    content=item.content,
+                    source_type=item.source_type,
+                    source=item.source,
+                    confidence=(
+                        "high"
+                        if item.score >= 0.8
+                        else "medium"
+                        if item.score >= 0.5
+                        else "low"
+                    ),
                 )
             )
 
@@ -168,6 +198,7 @@ class PMCopilotRuntime:
             raise ValueError("Task is not in the analyzing stage")
 
         state.analysis = self.product_analyzer.analyze(state)
+        state.final_output = self.finalizer.finalize(state)
 
         if state.plan is not None:
             for step in state.plan.steps:
@@ -191,18 +222,12 @@ class PMCopilotRuntime:
         if not approved and not feedback:
             raise ValueError("Feedback is required when review is not approved")
 
-        if feedback:
-            state.messages.append(Message(role="user", content=feedback))
-            state.decisions.append(
-                Decision(
-                    decision=feedback,
-                    reason="用户在方案 Review 阶段提出修改意见",
-                    decided_by="user",
-                )
-            )
+        if not approved:
+            return self._revise_plan(state, feedback or "", "review_feedback")
 
         state.task.current_stage = AgentStage.FINALIZING
-        state.final_output = self.finalizer.finalize(state)
+        if state.final_output is None:
+            state.final_output = self.finalizer.finalize(state)
 
         if state.plan is not None:
             for step in state.plan.steps:
@@ -210,4 +235,42 @@ class PMCopilotRuntime:
                     step.status = "completed"
 
         state.task.current_stage = AgentStage.COMPLETED
+        return state
+
+    def revise_completed_task(
+        self,
+        state: AgentState,
+        feedback: str,
+    ) -> AgentState:
+        """Apply a new condition to a completed task as its next plan version."""
+        if state.task.current_stage != AgentStage.COMPLETED:
+            raise ValueError("Task is not completed")
+        if not feedback.strip():
+            raise ValueError("Revision feedback is required")
+        return self._revise_plan(state, feedback, "added_condition")
+
+    def _revise_plan(
+        self,
+        state: AgentState,
+        feedback: str,
+        revision_type: str,
+    ) -> AgentState:
+        """Run one focused revision and retain its versioned history."""
+        version_from = state.task.plan_version
+        revision = self.plan_reviser.revise(state, feedback)
+        state.review_feedback.append(
+            ReviewFeedback(
+                version=version_from + 1,
+                version_from=version_from,
+                version_to=version_from + 1,
+                feedback=feedback,
+                revision_summary=revision.revision_summary,
+                revision_type=revision_type,
+            )
+        )
+        state.task.plan_version = version_from + 1
+        state.final_output = revision.revised_plan
+        state.task.current_stage = AgentStage.WAITING_REVIEW
+        if state.plan is not None and state.plan.steps:
+            state.plan.steps[-1].status = "running"
         return state
