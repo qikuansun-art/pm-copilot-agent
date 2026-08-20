@@ -1,0 +1,1 @@
+"""Standalone interactive prototype generation."""

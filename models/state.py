@@ -2,10 +2,13 @@
 
 from enum import Enum
 from datetime import datetime, timezone
+from typing import Literal
 
 from pydantic import BaseModel, Field
 
 from models.final_output import FinalProductPlan
+from models.flow import ProductFlow
+from models.prototype import PrototypeSpec
 
 
 class AgentStage(str, Enum):
@@ -31,6 +34,30 @@ class Message(BaseModel):
     content: str
 
 
+class GenerationOptions(BaseModel):
+    """Selects optional artifacts generated alongside the core product plan."""
+
+    generate_flow: bool = True
+    generate_prototype: bool = False
+    generate_report: bool = False
+
+
+class GenerationDiagnostic(BaseModel):
+    """Persisted, safe diagnostic for one optional generated artifact."""
+
+    status: Literal["pending", "completed", "empty", "failed", "skipped"] = "pending"
+    error_type: str | None = None
+    message: str | None = None
+    details: list[str] = Field(default_factory=list)
+
+
+class GenerationStatus(BaseModel):
+    """Tracks Flow and Prototype generation independently."""
+
+    flow: GenerationDiagnostic = Field(default_factory=GenerationDiagnostic)
+    prototype: GenerationDiagnostic = Field(default_factory=GenerationDiagnostic)
+
+
 class TaskContext(BaseModel):
     """Holds the request context and current progress of a PM Copilot task."""
 
@@ -42,6 +69,7 @@ class TaskContext(BaseModel):
     missing_information: list[str] = Field(default_factory=list)
     assumptions: list[str] = Field(default_factory=list)
     knowledge_group_ids: list[str] = Field(default_factory=list)
+    generation_options: GenerationOptions = Field(default_factory=GenerationOptions)
     created_at: str = Field(
         default_factory=lambda: datetime.now(timezone.utc).isoformat()
     )
@@ -130,6 +158,9 @@ class AgentState(BaseModel):
     decisions: list[Decision] = Field(default_factory=list)
     analysis: ProductAnalysis | None = None
     final_output: FinalProductPlan | None = None
+    product_flow: ProductFlow | None = None
+    prototype_spec: PrototypeSpec | None = None
+    generation_status: GenerationStatus = Field(default_factory=GenerationStatus)
     review_feedback: list[ReviewFeedback] = Field(default_factory=list)
 
 

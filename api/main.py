@@ -4,13 +4,16 @@ from uuid import uuid4
 
 from fastapi import FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import HTMLResponse
 from pydantic import BaseModel, Field
 
 from agent.runtime import PMCopilotRuntime
 from api.task_store import task_store
 from knowledge.document_parser import document_parser
 from knowledge.document_store import document_store
-from models.state import AgentState, TaskContext
+from models.state import AgentState, GenerationOptions, TaskContext
+from report.html_report import generate_html_report
+from prototype.html_prototype import generate_interactive_prototype
 
 
 app = FastAPI(title="PM Copilot Agent")
@@ -52,6 +55,7 @@ class CreateTaskRequest(BaseModel):
     title: str
     request: str
     knowledge_group_ids: list[str] = Field(default_factory=list)
+    generation_options: GenerationOptions = Field(default_factory=GenerationOptions)
 
 
 class ClarificationRequest(BaseModel):
@@ -227,6 +231,7 @@ def create_task(payload: CreateTaskRequest) -> dict[str, object]:
             title=payload.title,
             original_request=payload.request,
             knowledge_group_ids=payload.knowledge_group_ids,
+            generation_options=payload.generation_options,
         )
     )
     state = PMCopilotRuntime().start_task(state)
@@ -251,6 +256,7 @@ def create_task(payload: CreateTaskRequest) -> dict[str, object]:
         "missing_information": state.task.missing_information,
         "questions": questions,
         "knowledge_group_ids": state.task.knowledge_group_ids,
+        "generation_options": state.task.generation_options.model_dump(),
         "plan_version": state.task.plan_version,
     }
 
@@ -288,6 +294,30 @@ def delete_task(task_id: str) -> dict[str, object]:
         raise HTTPException(status_code=404, detail="Task not found")
     tasks.pop(task_id, None)
     return {"deleted": True, "task_id": task_id}
+
+
+@app.get("/tasks/{task_id}/report/html", response_class=HTMLResponse)
+def get_task_html_report(task_id: str) -> HTMLResponse:
+    """Return a standalone HTML report for one task's current final plan."""
+    state = get_task_state(task_id)
+    if state is None:
+        raise HTTPException(status_code=404, detail="Task not found")
+    if state.final_output is None:
+        raise HTTPException(status_code=409, detail="Task has no final plan")
+    return HTMLResponse(content=generate_html_report(state))
+
+
+@app.get("/tasks/{task_id}/prototype/html", response_class=HTMLResponse)
+def get_task_html_prototype(task_id: str) -> HTMLResponse:
+    """Return a standalone interactive HTML prototype for one task."""
+    state = get_task_state(task_id)
+    if state is None:
+        raise HTTPException(status_code=404, detail="Task not found")
+    if state.final_output is None:
+        raise HTTPException(status_code=409, detail="Task has no final plan")
+    if state.prototype_spec is None:
+        raise HTTPException(status_code=409, detail="Task has no prototype spec")
+    return HTMLResponse(content=generate_interactive_prototype(state.prototype_spec))
 
 
 @app.post("/tasks/{task_id}/clarification")
@@ -423,8 +453,9 @@ def run_product_analysis(task_id: str) -> dict[str, object]:
     if state is None:
         raise HTTPException(status_code=404, detail="Task not found")
 
+    runtime = PMCopilotRuntime()
     try:
-        state = PMCopilotRuntime().run_product_analysis(state)
+        state = runtime.run_product_analysis(state)
     except ValueError as error:
         raise HTTPException(status_code=409, detail=str(error)) from error
 
@@ -441,6 +472,7 @@ def run_product_analysis(task_id: str) -> dict[str, object]:
             else None
         ),
         "plan_version": state.task.plan_version,
+        "generation_status": state.generation_status.model_dump(),
     }
 
 
@@ -459,8 +491,9 @@ def review_task(
             detail="feedback is required when review is not approved",
         )
 
+    runtime = PMCopilotRuntime()
     try:
-        state = PMCopilotRuntime().handle_review(
+        state = runtime.handle_review(
             state,
             approved=payload.approved,
             feedback=payload.feedback,
@@ -481,6 +514,7 @@ def review_task(
         "review_feedback": [
             item.model_dump() for item in state.review_feedback
         ],
+        "generation_status": state.generation_status.model_dump(),
     }
 
 
@@ -496,8 +530,9 @@ def revise_completed_task(
     if not payload.feedback.strip():
         raise HTTPException(status_code=422, detail="feedback must not be empty")
 
+    runtime = PMCopilotRuntime()
     try:
-        state = PMCopilotRuntime().revise_completed_task(
+        state = runtime.revise_completed_task(
             state,
             payload.feedback.strip(),
         )
@@ -511,4 +546,5 @@ def revise_completed_task(
         "final_output": state.final_output.model_dump() if state.final_output else None,
         "plan_version": state.task.plan_version,
         "review_feedback": [item.model_dump() for item in state.review_feedback],
+        "generation_status": state.generation_status.model_dump(),
     }

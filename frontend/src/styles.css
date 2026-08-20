@@ -129,6 +129,24 @@ button { cursor: pointer; }
 .task-group-options i { min-width: 15px; border-radius: 999px; padding: 1px 4px; background: #edf1f6; color: #76869b; font-size: 8px; font-style: normal; text-align: center; }
 .task-group-options p { margin: 0; color: #9aa5b5; font-size: 9px; }
 .task-knowledge-selector small { display: block; margin-top: 8px; color: #8491a4; font-size: 9px; }
+.generation-options { display: grid; gap: 8px; margin-top: 10px; padding: 11px 12px; border: 1px solid #e1e8f2; border-radius: 11px; background: #f8fbff; }
+.generation-options > strong { color: #52627a; font-size: 11px; }
+.generation-options > small { color: #8491a4; font-size: 9px; }
+.generation-options label { display: flex; align-items: flex-start; gap: 8px; cursor: pointer; }
+.generation-options input { width: 13px; height: 13px; margin: 2px 0 0; accent-color: #2870d8; }
+.generation-options input:disabled { cursor: not-allowed; opacity: .65; }
+.generation-options label span, .generation-options label b, .generation-options label em { display: block; }
+.generation-options label b { color: #46566e; font-size: 10px; }
+.generation-options label em { margin-top: 2px; color: #8a97a9; font-size: 9px; font-style: normal; }
+.task-progress { margin-top: 12px; padding: 12px; border: 1px solid #dce7f5; border-radius: 12px; background: #f7fbff; }
+.task-progress-heading { display: flex; align-items: center; justify-content: space-between; color: #3569ad; }
+.task-progress-heading strong { font-size: 11px; }.task-progress-heading span { font-size: 10px; font-weight: 800; }
+.task-progress-track { height: 7px; margin-top: 9px; overflow: hidden; border-radius: 999px; background: #dfe9f5; }
+.task-progress-track i { display: block; height: 100%; border-radius: inherit; background: linear-gradient(90deg, #347be0, #61a0f4); transition: width .2s ease; }
+.task-progress > p { margin: 8px 0 0; color: #677b98; font-size: 10px; }
+.task-progress-steps { display: flex; flex-wrap: wrap; gap: 5px 10px; margin-top: 9px; }
+.task-progress-steps span { color: #98a4b4; font-size: 9px; }.task-progress-steps span i { margin-right: 3px; font-style: normal; }
+.task-progress-steps .completed { color: #16805a; }.task-progress-steps .running { color: #286dcc; font-weight: 700; }.task-progress-steps .failed { color: #b77720; }
 .conversation { min-height: 180px; flex: 1 1 260px; margin-top: 16px; overflow-y: auto; overflow-x: hidden; border-top: 1px solid #edf1f6; border-bottom: 1px solid #edf1f6; padding: 18px 4px; }
 .conversation-empty { height: 100%; display: grid; place-items: center; color: #95a2b4; font-size: 12px; text-align: center; }
 .message { display: flex; align-items: flex-start; gap: 10px; margin-bottom: 18px; }
@@ -259,8 +277,21 @@ button { cursor: pointer; }
 .review-banner button:disabled { cursor: not-allowed; opacity: .6; }
 .completion-message { margin-top: 12px; padding: 12px; border: 1px solid #bfe7d6; border-radius: 10px; background: #eaf8f2; color: #157d58; font-size: 13px; font-weight: 700; text-align: center; }
 .final-plan { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 18px; }
+.final-plan-actions { display: flex; justify-content: flex-end; gap: 8px; margin-bottom: 14px; }
+.final-plan-actions button { border: 0; border-radius: 9px; padding: 9px 13px; background: #2169d5; color: white; font-size: 10px; font-weight: 700; }
+.final-plan-actions button:hover { background: #185bbc; }
+.final-plan-block { min-width: 0; }
+.final-plan-block.solution-with-flow { grid-column: 1 / -1; display: grid; gap: 18px; }
 .final-plan section { min-width: 0; padding: 16px; border: 1px solid #e3eaf3; border-radius: 12px; background: white; }
 .final-plan h3 { margin: 0 0 10px; color: #35445b; font-size: 14px; }
+.business-flow-section h3 span { margin-left: 7px; color: #8593a7; font-size: 9px; }
+.business-flow-card { padding: 14px; border: 1px solid #e0e8f2; border-radius: 10px; background: #f9fbfe; }
+.business-flow-card > strong { display: block; color: #3f5069; font-size: 12px; }
+.business-flow-canvas { max-height: 560px; margin-top: 12px; overflow: auto; border: 1px solid #e5ebf3; border-radius: 9px; background: white; }
+.business-flow-svg { min-width: 560px; padding: 14px; }
+.business-flow-svg svg { display: block; max-width: none; height: auto; margin: 0 auto; }
+.business-flow-description { margin-top: 10px !important; font-size: 11px !important; }
+.business-flow-error { padding: 32px 16px; color: #8a97a9 !important; text-align: center; }
 .workspace-empty.compact { min-height: 40px; justify-content: start; }
 .final-object { overflow: auto; margin: 0; color: #526079; font: 12px/1.6 Consolas, monospace; white-space: pre-wrap; }
 

@@ -1,13 +1,17 @@
 """Runtime orchestration for the initial PM Copilot state transition."""
 
+from pydantic import ValidationError
+
 from agent.requirement_understanding import RequirementUnderstandingService
 from agent.planner import PMPlanner
 from agent.product_analyzer import ProductAnalyzer
+from agent.prototype_planner import PrototypePlanner
 from agent.research_planner import ResearchPlanner
 from agent.finalizer import ProductPlanFinalizer
+from agent.flow_generator import ProductFlowGenerator
 from agent.plan_reviser import ProductPlanReviser
 from models.research import ResearchPlan
-from models.state import AgentStage, AgentState, Message, ReviewFeedback
+from models.state import AgentStage, AgentState, GenerationDiagnostic, Message, ReviewFeedback
 from models.state import Evidence, ToolCall
 from tools.knowledge_search import KnowledgeSearchTool
 from tools.web_search import WebSearchTool
@@ -25,7 +29,46 @@ class PMCopilotRuntime:
         self.web_search = WebSearchTool()
         self.product_analyzer = ProductAnalyzer()
         self.finalizer = ProductPlanFinalizer()
+        self.flow_generator = ProductFlowGenerator()
+        self.prototype_planner = PrototypePlanner()
+        self.last_generation_status: dict[str, str] = {}
         self.plan_reviser = ProductPlanReviser()
+
+    @staticmethod
+    def _failed_diagnostic(error: Exception) -> GenerationDiagnostic:
+        """Build a bounded diagnostic without retaining requests or raw LLM output."""
+        cause: BaseException = error
+        seen: set[int] = set()
+        while cause.__cause__ is not None and id(cause) not in seen:
+            seen.add(id(cause))
+            cause = cause.__cause__
+
+        details: list[str] = []
+        if isinstance(cause, ValidationError):
+            for item in cause.errors(include_url=False, include_context=False)[:20]:
+                location = ".".join(str(part) for part in item.get("loc", ())) or "prototype"
+                message = str(item.get("msg", "Invalid value"))[:250]
+                details.append(f"{location}: {message}")
+
+        message = str(error).strip() or type(error).__name__
+        return GenerationDiagnostic(
+            status="failed",
+            error_type=type(cause).__name__,
+            message=message[:500],
+            details=details,
+        )
+
+    def _set_generation_diagnostic(
+        self,
+        state: AgentState,
+        artifact: str,
+        diagnostic: GenerationDiagnostic,
+    ) -> None:
+        """Persist a diagnostic and retain the legacy transient status map."""
+        setattr(state.generation_status, artifact, diagnostic)
+        if not hasattr(self, "last_generation_status"):
+            self.last_generation_status = {}
+        self.last_generation_status[artifact] = diagnostic.status
 
     def start_task(self, state: AgentState) -> AgentState:
         """Run requirement understanding and advance the supplied task state."""
@@ -199,6 +242,8 @@ class PMCopilotRuntime:
 
         state.analysis = self.product_analyzer.analyze(state)
         state.final_output = self.finalizer.finalize(state)
+        self._refresh_product_flow(state)
+        self._refresh_prototype_spec(state)
 
         if state.plan is not None:
             for step in state.plan.steps:
@@ -271,6 +316,8 @@ class PMCopilotRuntime:
         )
         state.task.plan_version = version_from + 1
         state.final_output = revision.revised_plan
+        self._refresh_product_flow(state)
+        self._refresh_prototype_spec(state)
         state.task.current_stage = AgentStage.WAITING_REVIEW
         if state.plan is not None and state.plan.steps:
             # A revision reopens only the final step. Normalize stale statuses
@@ -279,3 +326,68 @@ class PMCopilotRuntime:
                 step.status = "completed"
             state.plan.steps[-1].status = "running"
         return state
+
+    def _refresh_product_flow(self, state: AgentState) -> None:
+        """Best-effort refresh of the optional flow for the current plan."""
+        state.product_flow = None
+        if not state.task.generation_options.generate_flow:
+            self._set_generation_diagnostic(state, "flow", GenerationDiagnostic(status="skipped"))
+            return
+        if state.final_output is None:
+            self._set_generation_diagnostic(state, "flow", GenerationDiagnostic(status="empty"))
+            return
+        generator = getattr(self, "flow_generator", None)
+        if generator is None:
+            self._set_generation_diagnostic(
+                state,
+                "flow",
+                GenerationDiagnostic(status="failed", error_type="RuntimeError", message="Flow generator is unavailable"),
+            )
+            return
+        self._set_generation_diagnostic(state, "flow", GenerationDiagnostic(status="pending"))
+        try:
+            state.product_flow = generator.generate(
+                state.task.original_request,
+                state.final_output,
+            )
+            self._set_generation_diagnostic(
+                state,
+                "flow",
+                GenerationDiagnostic(status="completed" if state.product_flow is not None else "empty"),
+            )
+        except Exception as error:
+            state.product_flow = None
+            self._set_generation_diagnostic(state, "flow", self._failed_diagnostic(error))
+
+    def _refresh_prototype_spec(self, state: AgentState) -> None:
+        """Best-effort refresh of the optional prototype for the current plan."""
+        state.prototype_spec = None
+        if not state.task.generation_options.generate_prototype:
+            self._set_generation_diagnostic(state, "prototype", GenerationDiagnostic(status="skipped"))
+            return
+        if state.final_output is None:
+            self._set_generation_diagnostic(state, "prototype", GenerationDiagnostic(status="empty"))
+            return
+        planner = getattr(self, "prototype_planner", None)
+        if planner is None:
+            self._set_generation_diagnostic(
+                state,
+                "prototype",
+                GenerationDiagnostic(status="failed", error_type="RuntimeError", message="Prototype planner is unavailable"),
+            )
+            return
+        self._set_generation_diagnostic(state, "prototype", GenerationDiagnostic(status="pending"))
+        try:
+            state.prototype_spec = planner.generate(
+                state.task.original_request,
+                state.final_output,
+                state.product_flow,
+            )
+            self._set_generation_diagnostic(
+                state,
+                "prototype",
+                GenerationDiagnostic(status="completed" if state.prototype_spec is not None else "empty"),
+            )
+        except Exception as error:
+            state.prototype_spec = None
+            self._set_generation_diagnostic(state, "prototype", self._failed_diagnostic(error))

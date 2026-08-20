@@ -1,6 +1,39 @@
 import { useEffect, useRef, useState } from "react";
+import BusinessFlowCard from "./BusinessFlowCard";
 
 const API_BASE_URL = "http://127.0.0.1:8000";
+
+const DEFAULT_GENERATION_OPTIONS = {
+  generate_flow: true,
+  generate_prototype: false,
+  generate_report: false,
+};
+
+const BASE_PROGRESS_STEPS = [
+  ["understanding", "理解需求"],
+  ["clarification", "需求澄清"],
+  ["planning", "生成计划"],
+  ["internal", "内部资料检索"],
+  ["external", "外部资料调研"],
+  ["analysis", "产品分析"],
+  ["final", "最终方案"],
+];
+
+function progressStepsFor(options) {
+  const steps = [...BASE_PROGRESS_STEPS];
+  if (options.generate_flow) steps.push(["flow", "业务流程图"]);
+  if (options.generate_prototype) steps.push(["prototype", "交互原型"]);
+  return steps.map(([id, label]) => ({ id, label, status: "pending" }));
+}
+
+function restoredProgress(state, options) {
+  if (!state?.task || !state.final_output) return null;
+  const complete = ["WAITING_REVIEW", "COMPLETED"].includes(state.task.current_stage);
+  return {
+    steps: progressStepsFor(options).map((step) => ({ ...step, status: complete ? "completed" : "pending" })),
+    currentStep: null,
+  };
+}
 
 const workspaceTabs = [
   "Evidence",
@@ -25,6 +58,10 @@ function App() {
   const [evidence, setEvidence] = useState([]);
   const [analysis, setAnalysis] = useState(null);
   const [finalOutput, setFinalOutput] = useState(null);
+  const [productFlow, setProductFlow] = useState(null);
+  const [prototypeSpec, setPrototypeSpec] = useState(null);
+  const [generationOptions, setGenerationOptions] = useState(DEFAULT_GENERATION_OPTIONS);
+  const [taskProgress, setTaskProgress] = useState(null);
   const [reviewFeedback, setReviewFeedback] = useState("");
   const [reviewHistory, setReviewHistory] = useState([]);
   const [planVersion, setPlanVersion] = useState(1);
@@ -221,19 +258,24 @@ function App() {
           return { question, reason };
         });
       const userMessages = (state.messages || []).filter((message) => message.role === "user");
+      const restoredOptions = { ...DEFAULT_GENERATION_OPTIONS, ...(state.task?.generation_options || {}) };
       resetTaskState();
       setRequest(state.task.original_request || "");
       setSubmittedRequest(state.task.original_request || "");
       setSubmittedAnswer(userMessages[0]?.content || "");
       setSelectedKnowledgeGroupIds(groupIds);
+      setGenerationOptions(restoredOptions);
       setTask({ ...state.task, questions, knowledge_group_names: groupNames });
       setGeneratedPlan(state.plan || null);
       setToolCalls(state.tool_calls || []);
       setEvidence(state.evidence || []);
       setAnalysis(state.analysis || null);
       setFinalOutput(state.final_output || null);
+      setProductFlow(state.product_flow || null);
+      setPrototypeSpec(state.prototype_spec || null);
       setReviewHistory(state.review_feedback || []);
       setPlanVersion(state.task?.plan_version || 1);
+      setTaskProgress(restoredProgress(state, restoredOptions));
     } catch (requestError) {
       if (requestError instanceof DOMException && requestError.name === "AbortError") return;
       setError(requestError instanceof Error ? requestError.message : "打开历史方案失败。");
@@ -269,6 +311,13 @@ function App() {
     } finally {
       setIsDeletingTask(false);
     }
+  }
+
+  async function refreshProductFlow(taskId) {
+    const response = await fetch(`${API_BASE_URL}/tasks/${taskId}`, { cache: "no-store" });
+    const state = await parseResponse(response, "刷新业务流程");
+    setProductFlow(state.product_flow || null);
+    setPrototypeSpec(state.prototype_spec || null);
   }
 
   function handleUploadFileSelection(event) {
@@ -439,6 +488,43 @@ function App() {
     }
   }
 
+  function startProgress(options, currentStep = "understanding", completed = []) {
+    setTaskProgress({
+      steps: progressStepsFor(options).map((step) => ({
+        ...step,
+        status: completed.includes(step.id) ? "completed" : step.id === currentStep ? "running" : "pending",
+      })),
+      currentStep,
+    });
+  }
+
+  function advanceProgress(completed = [], currentStep = null, failed = []) {
+    setTaskProgress((current) => {
+      if (!current) return current;
+      return {
+        currentStep,
+        steps: current.steps.map((step) => {
+          if (failed.includes(step.id)) return { ...step, status: "failed" };
+          if (completed.includes(step.id)) return { ...step, status: "completed" };
+          if (step.id === currentStep) return { ...step, status: "running" };
+          return step.status === "running" ? { ...step, status: "pending" } : step;
+        }),
+      };
+    });
+  }
+
+  function finishGeneratedArtifacts(payload) {
+    const enabledOptional = [
+      ...(generationOptions.generate_flow ? ["flow"] : []),
+      ...(generationOptions.generate_prototype ? ["prototype"] : []),
+    ];
+    const failed = enabledOptional.filter((id) => {
+      const diagnostic = payload.generation_status?.[id];
+      return (typeof diagnostic === "string" ? diagnostic : diagnostic?.status) === "failed";
+    });
+    advanceProgress(["analysis", "final", ...enabledOptional.filter((id) => !failed.includes(id))], null, failed);
+  }
+
   function resetTaskState() {
     setActiveTab("Evidence");
     setReply("");
@@ -451,6 +537,10 @@ function App() {
     setEvidence([]);
     setAnalysis(null);
     setFinalOutput(null);
+    setProductFlow(null);
+    setPrototypeSpec(null);
+    setGenerationOptions({ ...DEFAULT_GENERATION_OPTIONS });
+    setTaskProgress(null);
     setReviewFeedback("");
     setReviewHistory([]);
     setPlanVersion(1);
@@ -473,6 +563,7 @@ function App() {
     resetTaskState();
     setRequest("");
     setSelectedKnowledgeGroupIds([]);
+    setGenerationOptions({ ...DEFAULT_GENERATION_OPTIONS });
   }
 
   async function parseResponse(response, stageName) {
@@ -544,7 +635,10 @@ function App() {
     const selectedGroupNames = knowledgeGroups
       .filter((group) => selectedKnowledgeGroupIds.includes(group.group_id))
       .map((group) => group.name);
+    const selectedGenerationOptions = { ...generationOptions };
     resetTaskState();
+    setGenerationOptions(selectedGenerationOptions);
+    startProgress(selectedGenerationOptions);
     setIsLoading(true);
     try {
       const response = await fetch(`${API_BASE_URL}/tasks`, {
@@ -554,6 +648,7 @@ function App() {
           title: "产品规划任务",
           request: normalizedRequest,
           knowledge_group_ids: selectedKnowledgeGroupIds,
+          generation_options: selectedGenerationOptions,
         }),
       });
       const payload = await parseResponse(response, "需求理解");
@@ -566,10 +661,14 @@ function App() {
         knowledge_group_ids: payload.knowledge_group_ids || selectedKnowledgeGroupIds,
         knowledge_group_names: selectedGroupNames,
         plan_version: payload.plan_version || 1,
+        generation_options: payload.generation_options || selectedGenerationOptions,
       });
+      setGenerationOptions(payload.generation_options || selectedGenerationOptions);
       setPlanVersion(payload.plan_version || 1);
       setSubmittedRequest(normalizedRequest);
+      advanceProgress(["understanding"], "clarification");
       if (payload.current_stage === "PLANNING" && !(payload.questions || []).length) {
+        advanceProgress(["understanding", "clarification"], "planning");
         await continueAfterClarification(payload.task_id);
       }
       await loadTaskHistory();
@@ -600,6 +699,7 @@ function App() {
     }
 
     setAutomationStage("internal");
+    advanceProgress(["understanding", "clarification", "planning"], "internal");
     const internalResponse = await fetch(
       `${API_BASE_URL}/tasks/${taskId}/research/internal`,
       {
@@ -614,6 +714,7 @@ function App() {
     syncWorkflowResponse(internal, "internal");
 
     setAutomationStage("external");
+    advanceProgress(["understanding", "clarification", "planning", "internal"], "external");
     const externalResponse = await fetch(
       `${API_BASE_URL}/tasks/${taskId}/research/external`,
       {
@@ -628,6 +729,7 @@ function App() {
     syncWorkflowResponse(external, "external");
 
     setAutomationStage("analysis");
+    advanceProgress(["understanding", "clarification", "planning", "internal", "external"], "analysis");
     const analysisResponse = await fetch(
       `${API_BASE_URL}/tasks/${taskId}/analysis`,
       { method: "POST" },
@@ -637,6 +739,8 @@ function App() {
     setFinalOutput(analysisPayload.final_output || null);
     setPlanVersion(analysisPayload.plan_version || 1);
     syncWorkflowResponse(analysisPayload, "analysis");
+    finishGeneratedArtifacts(analysisPayload);
+    await refreshProductFlow(taskId);
     await loadTaskHistory();
     setAutomationStage("");
   }
@@ -651,6 +755,7 @@ function App() {
 
     setIsReviewing(true);
     setReviewAction(approved ? "approving" : "revising");
+    if (!approved) startProgress(generationOptions, "final", ["understanding", "clarification", "planning", "internal", "external", "analysis"]);
     setError("");
     try {
       const response = await fetch(`${API_BASE_URL}/tasks/${task.task_id}/review`, {
@@ -664,6 +769,8 @@ function App() {
       setReviewHistory(payload.review_feedback || []);
       if (!approved) setReviewFeedback("");
       syncWorkflowResponse(payload, payload.current_stage === "COMPLETED" ? "completed" : undefined);
+      if (!approved) finishGeneratedArtifacts(payload);
+      await refreshProductFlow(task.task_id);
       await loadTaskHistory();
     } catch (requestError) {
       setError(requestError instanceof Error ? requestError.message : "Review 请求失败。");
@@ -684,6 +791,7 @@ function App() {
     setIsSubmittingCondition(true);
     setSubmittedCondition(feedback);
     setConditionStatus("adjusting");
+    startProgress(generationOptions, "final", ["understanding", "clarification", "planning", "internal", "external", "analysis"]);
     setError("");
     try {
       const response = await fetch(`${API_BASE_URL}/tasks/${task.task_id}/revision`, {
@@ -699,6 +807,8 @@ function App() {
       setShowAddCondition(false);
       setConditionStatus("updated");
       syncWorkflowResponse(payload, "revision");
+      finishGeneratedArtifacts(payload);
+      await refreshProductFlow(task.task_id);
       await loadTaskHistory();
     } catch (requestError) {
       setConditionStatus("");
@@ -741,6 +851,7 @@ function App() {
       }));
       if (clarification.plan) setGeneratedPlan(clarification.plan);
 
+      advanceProgress(["understanding", "clarification"], "planning");
       await continueAfterClarification(task.task_id);
     } catch (requestError) {
       setAutomationStage("");
@@ -753,12 +864,14 @@ function App() {
 
   async function continueAfterClarification(taskId) {
     setIsPlanning(true);
+    advanceProgress(["understanding", "clarification"], "planning");
     const planResponse = await fetch(
       `${API_BASE_URL}/tasks/${taskId}/plan`,
       { method: "POST" },
     );
     const planPayload = await parseResponse(planResponse, "生成产品计划");
     syncWorkflowResponse(planPayload);
+    advanceProgress(["understanding", "clarification", "planning"], "internal");
     setIsPlanning(false);
     await runAutomatedWorkflow(taskId);
   }
@@ -793,9 +906,22 @@ function App() {
       ["mvp_scope", "MVP 范围"], ["future_scope", "未来范围"],
       ["risks", "风险"], ["decisions", "决策"],
     ];
-    return <div className="final-plan">{fields.map(([key, label]) => (
-      <section key={key}><h3>{label}</h3>{renderFinalValue(finalOutput[key])}</section>
-    ))}</div>;
+    return (
+      <>
+        {task?.task_id && (
+          <div className="final-plan-actions">
+            {generationOptions.generate_report && <button type="button" onClick={() => window.open(`${API_BASE_URL}/tasks/${task.task_id}/report/html`, "_blank", "noopener,noreferrer")}>查看方案报告</button>}
+            {generationOptions.generate_prototype && prototypeSpec && <button type="button" onClick={() => window.open(`${API_BASE_URL}/tasks/${task.task_id}/prototype/html`, "_blank", "noopener,noreferrer")}>查看交互原型</button>}
+          </div>
+        )}
+        <div className="final-plan">{fields.map(([key, label]) => (
+          <div className={`final-plan-block ${key === "solution" ? "solution-with-flow" : ""}`} key={key}>
+            <section><h3>{label}</h3>{renderFinalValue(finalOutput[key])}</section>
+            {key === "solution" && generationOptions.generate_flow && productFlow && <BusinessFlowCard flow={productFlow} />}
+          </div>
+        ))}</div>
+      </>
+    );
   }
 
   function renderWorkspace() {
@@ -1112,6 +1238,50 @@ function App() {
                     : "未选择时，Agent 将搜索全部内部知识。"}
                 </small>
               </div>
+            )}
+            {(!task || task.current_stage === "COMPLETED") && (
+              <div className="generation-options">
+                <strong>生成内容</strong>
+                <small>产品方案始终生成；可按需选择附加内容。</small>
+                {[
+                  ["generate_flow", "业务流程图", "自动提取主要业务流程"],
+                  ["generate_prototype", "交互原型", "生成可点击 HTML Demo · 生成时间较长"],
+                  ["generate_report", "HTML 方案报告", "生成独立产品方案页面"],
+                ].map(([key, label, description]) => (
+                  <label key={key}>
+                    <input
+                      type="checkbox"
+                      checked={generationOptions[key]}
+                      disabled={isBusy || Boolean(task)}
+                      onChange={(event) => setGenerationOptions((current) => ({ ...current, [key]: event.target.checked }))}
+                    />
+                    <span><b>{label}</b><em>{description}</em></span>
+                  </label>
+                ))}
+              </div>
+            )}
+            {taskProgress && (
+              <section className="task-progress" aria-label="任务生成进度">
+                {(() => {
+                  const completed = taskProgress.steps.filter((step) => ["completed", "failed"].includes(step.status)).length;
+                  const percent = Math.round((completed / taskProgress.steps.length) * 100);
+                  const current = taskProgress.steps.find((step) => step.id === taskProgress.currentStep);
+                  return (
+                    <>
+                      <div className="task-progress-heading"><strong>{percent === 100 ? "✓ 方案生成完成" : "正在生成方案"}</strong><span>{percent}%</span></div>
+                      <div className="task-progress-track"><i style={{ width: `${percent}%` }} /></div>
+                      <p>{current?.id === "clarification" && task?.current_stage === "WAITING_CLARIFICATION" ? "等待你补充信息" : current ? `当前：正在进行${current.label}...` : "全部所选内容已处理"}</p>
+                      <div className="task-progress-steps">
+                        {taskProgress.steps.map((step) => (
+                          <span className={step.status} key={step.id}>
+                            <i>{step.status === "completed" ? "✓" : step.status === "failed" ? "⚠" : step.status === "running" ? "●" : "○"}</i>{step.label}{step.status === "failed" ? " · 生成失败" : ""}
+                          </span>
+                        ))}
+                      </div>
+                    </>
+                  );
+                })()}
+              </section>
             )}
             <div className="conversation">
               {!task && !isLoading && <div className="conversation-empty">输入产品需求，Agent 将从需求理解和澄清开始工作。</div>}
