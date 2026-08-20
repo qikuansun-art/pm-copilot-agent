@@ -230,9 +230,10 @@ class PMCopilotRuntime:
             state.final_output = self.finalizer.finalize(state)
 
         if state.plan is not None:
+            # COMPLETED is a terminal state: no plan step may remain active.
+            # Do not depend on LLM-generated titles when enforcing this invariant.
             for step in state.plan.steps:
-                if step.title == "生成产品方案":
-                    step.status = "completed"
+                step.status = "completed"
 
         state.task.current_stage = AgentStage.COMPLETED
         return state
@@ -272,5 +273,9 @@ class PMCopilotRuntime:
         state.final_output = revision.revised_plan
         state.task.current_stage = AgentStage.WAITING_REVIEW
         if state.plan is not None and state.plan.steps:
+            # A revision reopens only the final step. Normalize stale statuses
+            # from earlier versions before marking that step as active.
+            for step in state.plan.steps:
+                step.status = "completed"
             state.plan.steps[-1].status = "running"
         return state

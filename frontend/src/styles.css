@@ -167,11 +167,27 @@ button { cursor: pointer; }
 .add-condition-form button:disabled { cursor: not-allowed; opacity: .6; }
 .task-history { max-height: 230px; overflow-y: auto; }
 .history-list { display: grid; gap: 6px; }
-.history-list button { display: grid; gap: 3px; width: 100%; border: 1px solid #e2e9f3; border-radius: 9px; padding: 8px 9px; background: #fbfcff; color: #44526a; text-align: left; }
-.history-list button:hover, .history-list button.active { border-color: #9dbce8; background: #eef5ff; }
+.history-item { position: relative; display: flex; border: 1px solid #e2e9f3; border-radius: 9px; background: #fbfcff; }
+.history-item:hover, .history-item.active { border-color: #9dbce8; background: #eef5ff; }
+.history-open { display: grid; gap: 3px; min-width: 0; flex: 1; border: 0; padding: 8px 5px 8px 9px; background: transparent; color: #44526a; text-align: left; }
+.history-more { align-self: flex-start; border: 0; padding: 5px 8px; background: transparent; color: #8794a7; font-weight: 800; letter-spacing: 1px; }
+.history-more:hover { color: #315f9d; }
+.history-menu { position: absolute; z-index: 5; top: 27px; right: 5px; width: 92px; padding: 4px; border: 1px solid #dce4ef; border-radius: 8px; background: white; box-shadow: 0 8px 20px #2136501f; }
+.history-menu button { width: 100%; border: 0; border-radius: 6px; padding: 7px 8px; background: transparent; color: #c44242; text-align: left; font-size: 9px; }
+.history-menu button:hover { background: #fff0f0; }
 .history-list strong { overflow: hidden; font-size: 10px; text-overflow: ellipsis; white-space: nowrap; }
 .history-list span, .history-list time { color: #8794a7; font-size: 8px; }
 .history-empty { color: #98a4b5 !important; font-size: 10px !important; }
+.modal-backdrop { position: fixed; z-index: 50; inset: 0; display: grid; place-items: center; padding: 20px; background: #17243a66; }
+.delete-task-modal { width: min(420px, 100%); padding: 22px; border-radius: 14px; background: white; box-shadow: 0 24px 60px #17243a3d; }
+.delete-task-modal h2 { margin: 0 0 12px; font-size: 17px; }
+.delete-task-modal p { margin: 5px 0; color: #66758a; font-size: 12px; line-height: 1.6; }
+.delete-task-modal > div { display: flex; justify-content: flex-end; gap: 8px; margin-top: 20px; }
+.delete-task-modal button { border: 0; border-radius: 8px; padding: 9px 13px; font-size: 11px; font-weight: 700; }
+.delete-task-modal button.secondary { border: 1px solid #d7e0eb; background: white; color: #627086; }
+.delete-task-modal button.danger { background: #d64545; color: white; }
+.delete-task-modal button.danger:hover { background: #bd3434; }
+.delete-task-modal button:disabled { cursor: not-allowed; opacity: .6; }
 
 .plan-list { margin-top: 24px; }
 .plan-goal { margin: 16px 0 -8px; padding: 10px 12px; border-radius: 10px; background: #f3f7fd; color: #52627a; font-size: 11px; line-height: 1.5; }

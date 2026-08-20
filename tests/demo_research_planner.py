@@ -1,23 +1,20 @@
-"""Demonstrate task-specific research planning for two distinct domains."""
+"""Validate dynamic internal-query structure and retrieval effectiveness."""
+
+import re
 
 from agent.research_planner import ResearchPlanner
 from models.research import ResearchPlan
 from models.state import AgentPlan, AgentState, PlanStep, TaskContext
+from tools.knowledge_search import KnowledgeSearchTool
 
 
-def build_state(
-    task_id: str,
-    title: str,
-    original_request: str,
-    known_facts: list[str],
-) -> AgentState:
+def build_state(task_id: str, title: str, original_request: str) -> AgentState:
     """Build a representative planned state for the research planner."""
     return AgentState(
         task=TaskContext(
             task_id=task_id,
             title=title,
             original_request=original_request,
-            known_facts=known_facts,
         ),
         plan=AgentPlan(
             goal=f"完成{title}的产品规划",
@@ -32,44 +29,62 @@ def build_state(
     )
 
 
-def print_research_plan(task_name: str, research_plan: ResearchPlan) -> None:
-    """Print the requested research plan fields."""
-    print(f"\n{task_name}")
-    print("internal_query:", research_plan.internal_query)
-    print("external_query:", research_plan.external_query)
-    print("research_focus:", research_plan.research_focus)
+def query_tokens(plan: ResearchPlan) -> list[str]:
+    """Validate and return space-delimited atomic internal-query tokens."""
+    tokens = plan.internal_query.split()
+    assert 3 <= len(tokens) <= 6
+    assert plan.internal_query == " ".join(tokens)
+    assert all(not re.search(r"[，。！？；：,!?;:]", token) for token in tokens)
+    assert all(len(token) <= 8 for token in tokens)
+    return tokens
 
 
 def main() -> None:
-    """Generate research plans for CNC tooling and stone-block processing."""
+    """Cover a cross-domain request and a maintenance-work-order request."""
     planner = ResearchPlanner()
 
-    cnc_state = build_state(
-        task_id="research-cnc-demo",
-        title="CNC 刀具管理功能",
-        original_request="帮我规划一个 CNC 刀具管理功能",
-        known_facts=["需要工艺与刀具关联", "需要刀具寿命管理"],
+    cross_domain_state = build_state(
+        "research-cross-domain-demo",
+        "荒料加工与刀具使用管理",
+        "帮我规划石材荒料加工中的刀具使用管理，既要管理荒料从入库到大切的加工流程，"
+        "也要管理刀具与工艺关联和刀具寿命。",
     )
-    cnc_plan = planner.create_research_plan(cnc_state)
-    print_research_plan("任务 A：CNC 刀具管理", cnc_plan)
-
-    stone_state = build_state(
-        task_id="research-stone-demo",
-        title="石材荒料加工管理功能",
-        original_request="帮我规划一个石材荒料加工管理功能",
-        known_facts=[
-            "当前没有系统化管理",
-            "希望梳理荒料从入库到加工出库的流程",
-            "后续考虑扫描并用于销售展示",
-        ],
+    cross_domain_plan = planner.create_research_plan(cross_domain_state)
+    cross_domain_tokens = query_tokens(cross_domain_plan)
+    assert any(
+        any(term in token for term in ("石材", "荒料", "入库", "大切"))
+        for token in cross_domain_tokens
     )
-    stone_plan = planner.create_research_plan(stone_state)
-    print_research_plan("任务 B：石材荒料加工管理", stone_plan)
+    assert any(
+        any(term in token for term in ("刀具", "寿命", "工艺"))
+        for token in cross_domain_tokens
+    )
+    assert "石材荒料加工流程" not in cross_domain_tokens
 
-    stone_queries = f"{stone_plan.internal_query} {stone_plan.external_query}"
-    forbidden_terms = ("刀具", "自动换刀", "刀具寿命")
-    unexpected_terms = [term for term in forbidden_terms if term in stone_queries]
-    assert not unexpected_terms, f"荒料任务查询包含无关词：{unexpected_terms}"
+    results = KnowledgeSearchTool().search(
+        cross_domain_plan.internal_query,
+        knowledge_group_ids=[],
+    )
+    uploaded_sources = {
+        item.source for item in results if item.source_type == "uploaded_document"
+    }
+    assert "stone_block_processing.md" in uploaded_sources
+    assert "tool_management.md" in uploaded_sources
+
+    maintenance_state = build_state(
+        "research-maintenance-demo",
+        "设备维修工单管理",
+        "规划设备维修工单，由维修主管派单，并对处理超时进行提醒。",
+    )
+    maintenance_plan = planner.create_research_plan(maintenance_state)
+    maintenance_tokens = query_tokens(maintenance_plan)
+    assert "设备维修工单管理流程" not in maintenance_tokens
+    assert any("工单" in token for token in maintenance_tokens)
+    assert any("派单" in token or "维修主管" in token for token in maintenance_tokens)
+
+    print("Case A internal_query:", cross_domain_plan.internal_query)
+    print("Case A uploaded documents:", sorted(uploaded_sources))
+    print("Case B internal_query:", maintenance_plan.internal_query)
 
 
 if __name__ == "__main__":

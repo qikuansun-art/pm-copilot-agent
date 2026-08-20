@@ -131,3 +131,19 @@ class AgentState(BaseModel):
     analysis: ProductAnalysis | None = None
     final_output: FinalProductPlan | None = None
     review_feedback: list[ReviewFeedback] = Field(default_factory=list)
+
+
+def normalize_agent_state(state: AgentState) -> AgentState:
+    """Normalize plan statuses whose lifecycle meaning is unambiguous."""
+    if state.plan is None or not state.plan.steps:
+        return state
+
+    if state.task.current_stage == AgentStage.COMPLETED:
+        for step in state.plan.steps:
+            step.status = "completed"
+    elif state.task.current_stage == AgentStage.WAITING_REVIEW:
+        for step in state.plan.steps:
+            step.status = "completed"
+        state.plan.steps[-1].status = "running"
+
+    return state

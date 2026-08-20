@@ -64,18 +64,24 @@ function App() {
   const [knowledgeError, setKnowledgeError] = useState("");
   const [recentTasks, setRecentTasks] = useState([]);
   const [isLoadingHistory, setIsLoadingHistory] = useState(false);
+  const [isRestoringTask, setIsRestoringTask] = useState(false);
+  const [historyMenuTaskId, setHistoryMenuTaskId] = useState(null);
+  const [taskPendingDeletion, setTaskPendingDeletion] = useState(null);
+  const [isDeletingTask, setIsDeletingTask] = useState(false);
   const uploadHideTimerRef = useRef(null);
   const uploadFileInputRef = useRef(null);
   const knowledgeInitializedRef = useRef(false);
+  const restoreTaskControllerRef = useRef(null);
 
   const sourceTypeCount = new Set(evidence.map((item) => item.source_type)).size;
-  const isBusy = isLoading || isSubmittingAnswer || isPlanning || isReviewing || isSubmittingCondition || Boolean(automationStage);
+  const isBusy = isLoading || isSubmittingAnswer || isPlanning || isReviewing || isSubmittingCondition || isRestoringTask || Boolean(automationStage);
 
   useEffect(() => {
     void loadKnowledgeData();
     void loadTaskHistory();
     return () => {
       if (uploadHideTimerRef.current) window.clearTimeout(uploadHideTimerRef.current);
+      restoreTaskControllerRef.current?.abort();
     };
   }, []);
 
@@ -192,10 +198,18 @@ function App() {
 
   async function handleOpenTask(taskId) {
     if (isBusy) return;
+    restoreTaskControllerRef.current?.abort();
+    const controller = new AbortController();
+    restoreTaskControllerRef.current = controller;
+    setIsRestoringTask(true);
     setError("");
     try {
-      const response = await fetch(`${API_BASE_URL}/tasks/${taskId}`);
+      const response = await fetch(`${API_BASE_URL}/tasks/${taskId}`, {
+        cache: "no-store",
+        signal: controller.signal,
+      });
       const state = await parseResponse(response, "打开历史方案");
+      if (restoreTaskControllerRef.current !== controller) return;
       const groupIds = state.task?.knowledge_group_ids || [];
       const groupNames = knowledgeGroups
         .filter((group) => groupIds.includes(group.group_id))
@@ -221,7 +235,39 @@ function App() {
       setReviewHistory(state.review_feedback || []);
       setPlanVersion(state.task?.plan_version || 1);
     } catch (requestError) {
+      if (requestError instanceof DOMException && requestError.name === "AbortError") return;
       setError(requestError instanceof Error ? requestError.message : "打开历史方案失败。");
+    } finally {
+      if (restoreTaskControllerRef.current === controller) {
+        restoreTaskControllerRef.current = null;
+        setIsRestoringTask(false);
+      }
+    }
+  }
+
+  async function handleDeleteTask() {
+    if (!taskPendingDeletion || isDeletingTask) return;
+    const deletedTaskId = taskPendingDeletion.task_id;
+    setIsDeletingTask(true);
+    setError("");
+    try {
+      const response = await fetch(`${API_BASE_URL}/tasks/${deletedTaskId}`, {
+        method: "DELETE",
+      });
+      await parseResponse(response, "删除历史方案");
+      setRecentTasks((current) => current.filter((item) => item.task_id !== deletedTaskId));
+      setHistoryMenuTaskId(null);
+      setTaskPendingDeletion(null);
+      if (task?.task_id === deletedTaskId) {
+        restoreTaskControllerRef.current?.abort();
+        resetTaskState();
+        setRequest("");
+        setSelectedKnowledgeGroupIds([]);
+      }
+    } catch (requestError) {
+      setError(requestError instanceof Error ? requestError.message : "删除历史方案失败。");
+    } finally {
+      setIsDeletingTask(false);
     }
   }
 
@@ -837,17 +883,28 @@ function App() {
               {!isLoadingHistory && !recentTasks.length && <p className="history-empty">暂无历史方案</p>}
               <div className="history-list">
                 {recentTasks.slice(0, 8).map((historyTask) => (
-                  <button
-                    type="button"
-                    className={task?.task_id === historyTask.task_id ? "active" : ""}
-                    onClick={() => handleOpenTask(historyTask.task_id)}
-                    disabled={isBusy}
-                    key={historyTask.task_id}
-                  >
-                    <strong>{historyTask.title}</strong>
-                    <span>{historyTask.current_stage} · V{historyTask.plan_version || 1}</span>
-                    <time>{new Date(historyTask.updated_at).toLocaleString("zh-CN")}</time>
-                  </button>
+                  <div className={`history-item ${task?.task_id === historyTask.task_id ? "active" : ""}`} key={historyTask.task_id}>
+                    <button type="button" className="history-open" onClick={() => handleOpenTask(historyTask.task_id)} disabled={isBusy}>
+                      <strong>{historyTask.title}</strong>
+                      <span>{historyTask.current_stage} · V{historyTask.plan_version || 1}</span>
+                      <time>{new Date(historyTask.updated_at).toLocaleString("zh-CN")}</time>
+                    </button>
+                    <button
+                      type="button"
+                      className="history-more"
+                      aria-label={`操作 ${historyTask.title}`}
+                      aria-expanded={historyMenuTaskId === historyTask.task_id}
+                      onClick={() => setHistoryMenuTaskId((current) => current === historyTask.task_id ? null : historyTask.task_id)}
+                      disabled={isDeletingTask}
+                    >
+                      ···
+                    </button>
+                    {historyMenuTaskId === historyTask.task_id && (
+                      <div className="history-menu">
+                        <button type="button" onClick={() => { setHistoryMenuTaskId(null); setTaskPendingDeletion(historyTask); }}>删除方案</button>
+                      </div>
+                    )}
+                  </div>
                 ))}
               </div>
             </div>
@@ -1197,6 +1254,19 @@ function App() {
           <div className="workspace-content">{renderWorkspace()}</div>
         </section>
       </main>
+      {taskPendingDeletion && (
+        <div className="modal-backdrop" role="presentation" onMouseDown={() => { if (!isDeletingTask) setTaskPendingDeletion(null); }}>
+          <section className="delete-task-modal" role="dialog" aria-modal="true" aria-labelledby="delete-task-title" onMouseDown={(event) => event.stopPropagation()}>
+            <h2 id="delete-task-title">删除历史方案</h2>
+            <p>确认删除「{taskPendingDeletion.title}」吗？</p>
+            <p>删除后无法恢复，但不会删除该方案引用的 Knowledge 文档。</p>
+            <div>
+              <button type="button" className="secondary" onClick={() => setTaskPendingDeletion(null)} disabled={isDeletingTask}>取消</button>
+              <button type="button" className="danger" onClick={handleDeleteTask} disabled={isDeletingTask}>{isDeletingTask ? "删除中..." : "确认删除"}</button>
+            </div>
+          </section>
+        </div>
+      )}
     </div>
   );
 }

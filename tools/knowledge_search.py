@@ -24,7 +24,7 @@ class KnowledgeSearchTool:
             return []
 
         candidates: list[KnowledgeSearchResult] = []
-        group_fallback_candidates: list[KnowledgeSearchResult] = []
+        uploaded_fallback_candidates: list[KnowledgeSearchResult] = []
         allowed_group_ids = set(knowledge_group_ids or [])
         restrict_uploaded_documents = bool(allowed_group_ids)
 
@@ -48,8 +48,8 @@ class KnowledgeSearchTool:
                 )
                 if score >= 0.5:
                     candidates.append(result)
-                elif restrict_uploaded_documents and score > 0:
-                    group_fallback_candidates.append(result)
+                if score > 0 and match_count >= 2:
+                    uploaded_fallback_candidates.append(result)
 
         if self.knowledge_dir.is_dir():
             for file_path in sorted(self.knowledge_dir.glob("*.md")):
@@ -89,18 +89,18 @@ class KnowledgeSearchTool:
             if len(results) == 10:
                 break
 
-        if results or not restrict_uploaded_documents:
+        if any(item.source_type == "uploaded_document" for item in results):
             return results
 
-        group_fallback_candidates.sort(key=lambda item: -item.score)
-        fallback_results: list[KnowledgeSearchResult] = []
-        fallback_seen: set[str] = set()
-        for candidate in group_fallback_candidates:
-            if candidate.content in fallback_seen:
+        uploaded_fallback_candidates.sort(key=lambda item: -item.score)
+        fallback_count = 0
+        for candidate in uploaded_fallback_candidates:
+            if candidate.content in seen:
                 continue
-            fallback_seen.add(candidate.content)
-            fallback_results.append(candidate)
-            if len(fallback_results) == 3:
+            seen.add(candidate.content)
+            results.append(candidate)
+            fallback_count += 1
+            if fallback_count == 3 or len(results) == 10:
                 break
 
-        return fallback_results
+        return results

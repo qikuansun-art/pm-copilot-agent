@@ -281,6 +281,15 @@ def get_task(task_id: str) -> dict[str, object]:
     return state.model_dump(mode="json")
 
 
+@app.delete("/tasks/{task_id}")
+def delete_task(task_id: str) -> dict[str, object]:
+    """Permanently delete one persisted task and its memory cache entry."""
+    if not task_store.delete_task(task_id):
+        raise HTTPException(status_code=404, detail="Task not found")
+    tasks.pop(task_id, None)
+    return {"deleted": True, "task_id": task_id}
+
+
 @app.post("/tasks/{task_id}/clarification")
 def submit_clarification(
     task_id: str,

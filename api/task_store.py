@@ -4,7 +4,7 @@ import sqlite3
 from datetime import datetime, timezone
 from pathlib import Path
 
-from models.state import AgentState
+from models.state import AgentState, normalize_agent_state
 
 
 class TaskStore:
@@ -64,24 +64,67 @@ class TaskStore:
         """Return one persisted task, or None when it does not exist."""
         connection = self._connect()
         try:
-            row = connection.execute(
-                "SELECT state_json FROM tasks WHERE task_id = ?",
-                (task_id,),
-            ).fetchone()
+            with connection:
+                row = connection.execute(
+                    "SELECT state_json FROM tasks WHERE task_id = ?",
+                    (task_id,),
+                ).fetchone()
+                state = self._restore_state(connection, row) if row else None
         finally:
             connection.close()
-        return AgentState.model_validate_json(row["state_json"]) if row else None
+        return state
 
     def list(self) -> list[AgentState]:
         """Return persisted tasks with the most recently updated first."""
         connection = self._connect()
         try:
-            rows = connection.execute(
-                "SELECT state_json FROM tasks ORDER BY updated_at DESC"
-            ).fetchall()
+            with connection:
+                rows = connection.execute(
+                    "SELECT state_json FROM tasks ORDER BY updated_at DESC"
+                ).fetchall()
+                states = [self._restore_state(connection, row) for row in rows]
         finally:
             connection.close()
-        return [AgentState.model_validate_json(row["state_json"]) for row in rows]
+        return states
+
+    def delete_task(self, task_id: str) -> bool:
+        """Permanently delete one task and report whether it existed."""
+        connection = self._connect()
+        try:
+            with connection:
+                cursor = connection.execute(
+                    "DELETE FROM tasks WHERE task_id = ?",
+                    (task_id,),
+                )
+                deleted = cursor.rowcount > 0
+        finally:
+            connection.close()
+        return deleted
+
+    @staticmethod
+    def _restore_state(
+        connection: sqlite3.Connection,
+        row: sqlite3.Row,
+    ) -> AgentState:
+        """Deserialize, normalize, and permanently migrate one stored state."""
+        state = AgentState.model_validate_json(row["state_json"])
+        statuses_before = (
+            [step.status for step in state.plan.steps]
+            if state.plan is not None
+            else None
+        )
+        normalize_agent_state(state)
+        statuses_after = (
+            [step.status for step in state.plan.steps]
+            if state.plan is not None
+            else None
+        )
+        if statuses_after != statuses_before:
+            connection.execute(
+                "UPDATE tasks SET state_json = ? WHERE task_id = ?",
+                (state.model_dump_json(), state.task.task_id),
+            )
+        return state
 
 
 task_store = TaskStore()
