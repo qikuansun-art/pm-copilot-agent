@@ -200,7 +200,10 @@ button { cursor: pointer; }
 .delete-task-modal { width: min(420px, 100%); padding: 22px; border-radius: 14px; background: white; box-shadow: 0 24px 60px #17243a3d; }
 .delete-task-modal h2 { margin: 0 0 12px; font-size: 17px; }
 .delete-task-modal p { margin: 5px 0; color: #66758a; font-size: 12px; line-height: 1.6; }
-.delete-task-modal > div { display: flex; justify-content: flex-end; gap: 8px; margin-top: 20px; }
+.delete-task-error { margin-top: 14px; padding: 10px 12px; border: 1px solid #efb5b5; border-radius: 9px; background: #fff2f2; color: #a82f2f; }
+.delete-task-error strong { display: block; font-size: 11px; }
+.delete-task-error p { margin: 5px 0 0; color: #a82f2f; overflow-wrap: anywhere; }
+.delete-task-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 20px; }
 .delete-task-modal button { border: 0; border-radius: 8px; padding: 9px 13px; font-size: 11px; font-weight: 700; }
 .delete-task-modal button.secondary { border: 1px solid #d7e0eb; background: white; color: #627086; }
 .delete-task-modal button.danger { background: #d64545; color: white; }

@@ -109,6 +109,7 @@ function App() {
   const [isRestoringTask, setIsRestoringTask] = useState(false);
   const [historyMenuTaskId, setHistoryMenuTaskId] = useState(null);
   const [taskPendingDeletion, setTaskPendingDeletion] = useState(null);
+  const [deleteTaskError, setDeleteTaskError] = useState("");
   const [isDeletingTask, setIsDeletingTask] = useState(false);
   const uploadHideTimerRef = useRef(null);
   const uploadFileInputRef = useRef(null);
@@ -307,6 +308,7 @@ function App() {
       await parseResponse(response, "删除历史方案");
       setRecentTasks((current) => current.filter((item) => item.task_id !== deletedTaskId));
       setHistoryMenuTaskId(null);
+      setDeleteTaskError("");
       setTaskPendingDeletion(null);
       if (task?.task_id === deletedTaskId) {
         restoreTaskControllerRef.current?.abort();
@@ -315,7 +317,9 @@ function App() {
         setSelectedKnowledgeGroupIds([]);
       }
     } catch (requestError) {
-      setError(requestError instanceof Error ? requestError.message : "删除历史方案失败。");
+      const message = requestError instanceof Error ? requestError.message : "删除历史方案失败。";
+      setError(message);
+      setDeleteTaskError(message.startsWith("删除历史方案失败") ? message : `删除历史方案失败：${message}`);
     } finally {
       setIsDeletingTask(false);
     }
@@ -1097,7 +1101,7 @@ function App() {
                     </button>
                     {historyMenuTaskId === historyTask.task_id && (
                       <div className="history-menu">
-                        <button type="button" onClick={() => { setHistoryMenuTaskId(null); setTaskPendingDeletion(historyTask); }}>删除方案</button>
+                        <button type="button" onClick={() => { setHistoryMenuTaskId(null); setDeleteTaskError(""); setTaskPendingDeletion(historyTask); }}>删除方案</button>
                       </div>
                     )}
                   </div>
@@ -1470,13 +1474,19 @@ function App() {
         </section>
       </main>
       {taskPendingDeletion && (
-        <div className="modal-backdrop" role="presentation" onMouseDown={() => { if (!isDeletingTask) setTaskPendingDeletion(null); }}>
+        <div className="modal-backdrop" role="presentation" onMouseDown={() => { if (!isDeletingTask) { setDeleteTaskError(""); setTaskPendingDeletion(null); } }}>
           <section className="delete-task-modal" role="dialog" aria-modal="true" aria-labelledby="delete-task-title" onMouseDown={(event) => event.stopPropagation()}>
             <h2 id="delete-task-title">删除历史方案</h2>
             <p>确认删除「{taskPendingDeletion.title}」吗？</p>
             <p>删除后无法恢复，但不会删除该方案引用的 Knowledge 文档。</p>
-            <div>
-              <button type="button" className="secondary" onClick={() => setTaskPendingDeletion(null)} disabled={isDeletingTask}>取消</button>
+            {deleteTaskError && (
+              <div className="delete-task-error" role="alert">
+                <strong>⚠ 删除失败原因</strong>
+                <p>{deleteTaskError}</p>
+              </div>
+            )}
+            <div className="delete-task-actions">
+              <button type="button" className="secondary" onClick={() => { setDeleteTaskError(""); setTaskPendingDeletion(null); }} disabled={isDeletingTask}>取消</button>
               <button type="button" className="danger" onClick={handleDeleteTask} disabled={isDeletingTask}>{isDeletingTask ? "删除中..." : "确认删除"}</button>
             </div>
           </section>
