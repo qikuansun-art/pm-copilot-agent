@@ -142,13 +142,15 @@ def analyzing_state(task_id: str) -> AgentState:
 def main() -> None:
     """Cover initial generation, revisions, approval, SQLite, and legacy JSON."""
     # Cases A-C: flow success, no flow, and generation failure are non-blocking.
-    generated = analysis_runtime(flow(1)).run_product_analysis(
+    initial_runtime = analysis_runtime(flow(1))
+    generated = initial_runtime.run_product_analysis(
         analyzing_state("flow-generated")
     )
     assert generated.task.current_stage == AgentStage.WAITING_REVIEW
     assert generated.final_output is not None
     assert generated.product_flow == flow(1)
-    assert generated.prototype_spec == prototype(1)
+    assert generated.prototype_spec is None
+    assert initial_runtime.prototype_planner.calls == 0
 
     no_flow = analysis_runtime(None).run_product_analysis(
         analyzing_state("flow-none")
@@ -180,20 +182,24 @@ def main() -> None:
         final_output=final_plan(1),
         product_flow=flow(1),
         prototype_spec=prototype(1),
+        prototype_plan_version=1,
     )
     runtime.handle_review(revision_state, approved=False, feedback="增加维修结果")
     assert revision_state.task.plan_version == 2
     assert revision_state.product_flow == flow(2)
     assert revision_state.product_flow != flow(1)
-    assert revision_state.prototype_spec == prototype(2)
+    assert revision_state.prototype_spec == prototype(1)
+    assert revision_state.prototype_plan_version == 1
 
     runtime.handle_review(revision_state, approved=True)
     assert revision_state.task.current_stage == AgentStage.COMPLETED
     runtime.revise_completed_task(revision_state, "增加操作员确认")
     assert revision_state.task.plan_version == 3
     assert revision_state.product_flow == flow(3)
-    assert revision_state.prototype_spec == prototype(3)
+    assert revision_state.prototype_spec == prototype(1)
+    assert revision_state.prototype_plan_version == 1
     assert runtime.flow_generator.calls == 2
+    assert runtime.prototype_planner.calls == 0
 
     # Case F: approval preserves flow and does not call the generator.
     approved_flow = revision_state.product_flow
@@ -216,7 +222,8 @@ def main() -> None:
         restored = TaskStore(db_path).get(revision_state.task.task_id)
         assert restored is not None
         assert restored.product_flow == flow(3)
-        assert restored.prototype_spec == prototype(3)
+        assert restored.prototype_spec == prototype(1)
+        assert restored.prototype_plan_version == 1
     finally:
         if db_path.exists():
             db_path.unlink()

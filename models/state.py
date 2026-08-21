@@ -160,6 +160,7 @@ class AgentState(BaseModel):
     final_output: FinalProductPlan | None = None
     product_flow: ProductFlow | None = None
     prototype_spec: PrototypeSpec | None = None
+    prototype_plan_version: int | None = None
     generation_status: GenerationStatus = Field(default_factory=GenerationStatus)
     review_feedback: list[ReviewFeedback] = Field(default_factory=list)
 

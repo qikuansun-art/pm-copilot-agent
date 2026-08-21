@@ -317,3 +317,34 @@ button { cursor: pointer; }
   .review-actions { flex-direction: row; flex-wrap: wrap; }
   .final-plan { grid-template-columns: 1fr; }
 }
+.prototype-generation {
+  margin-top: 20px;
+  padding: 20px;
+  border: 1px solid #dbe3ef;
+  border-radius: 14px;
+  background: #f8fafc;
+}
+
+.prototype-generation.failed { border-color: #f3c7c7; background: #fffafa; }
+.prototype-generation-heading span { color: #64748b; font-size: 12px; letter-spacing: .08em; }
+.prototype-generation-heading h3 { margin: 6px 0 14px; }
+.prototype-progress { display: grid; grid-template-columns: 1fr auto; gap: 8px 12px; align-items: center; }
+.prototype-progress > div { height: 10px; overflow: hidden; border-radius: 999px; background: #e2e8f0; }
+.prototype-progress > div i { display: block; height: 100%; background: #2563eb; transition: width .2s ease; }
+.prototype-progress p { grid-column: 1 / -1; margin: 4px 0 12px; color: #475569; }
+.prototype-version-warning { color: #9a6700; }
+.prototype-actions { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 12px; }
+.prototype-diagnostic { margin-top: 12px; padding: 12px; border-radius: 8px; background: #fff; color: #991b1b; }
+.prototype-diagnostic p { margin: 6px 0; }
+.plan-waiting-note { margin: -4px 0 14px; color: #3976da; font-size: 10px; }
+.plan-artifacts { margin-top: 20px; padding-top: 16px; border-top: 1px solid #e5ebf3; }
+.plan-artifacts-heading { margin-bottom: 12px; color: #52627a; font-size: 11px; font-weight: 800; }
+.plan-artifact { display: flex; gap: 10px; padding: 11px; border: 1px solid #dce7f5; border-radius: 10px; background: #f8fbff; }
+.plan-artifact .artifact-marker { color: #2870d8; font-weight: 800; }
+.plan-artifact strong { color: #334159; font-size: 11px; }
+.plan-artifact p { margin: 4px 0 0; color: #687992; font-size: 9px; }
+.plan-artifact.stale .artifact-marker, .plan-artifact.stale p { color: #9a6700; }
+.plan-artifact.failed .artifact-marker, .plan-artifact.failed p { color: #b42318; }
+.plan-artifact button { margin-top: 7px; border: 0; padding: 0; background: transparent; color: #286dcc; font-size: 9px; font-weight: 700; }
+.artifact-diagnostic { margin-top: 8px; padding: 8px; border-radius: 7px; background: white; color: #8f1d1d; }
+.artifact-diagnostic small { display: block; margin-top: 4px; }

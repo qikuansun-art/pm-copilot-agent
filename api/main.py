@@ -11,7 +11,7 @@ from agent.runtime import PMCopilotRuntime
 from api.task_store import task_store
 from knowledge.document_parser import document_parser
 from knowledge.document_store import document_store
-from models.state import AgentState, GenerationOptions, TaskContext
+from models.state import AgentState, GenerationDiagnostic, GenerationOptions, TaskContext
 from report.html_report import generate_html_report
 from prototype.html_prototype import generate_interactive_prototype
 
@@ -318,6 +318,54 @@ def get_task_html_prototype(task_id: str) -> HTMLResponse:
     if state.prototype_spec is None:
         raise HTTPException(status_code=409, detail="Task has no prototype spec")
     return HTMLResponse(content=generate_interactive_prototype(state.prototype_spec))
+
+
+@app.post("/tasks/{task_id}/prototype/generate")
+def generate_task_prototype(
+    task_id: str,
+    force: bool = False,
+) -> dict[str, object]:
+    """Generate the prototype for the current final-plan version on demand."""
+    state = get_task_state(task_id)
+    if state is None:
+        raise HTTPException(status_code=404, detail="Task not found")
+    if state.final_output is None:
+        raise HTTPException(status_code=409, detail="Task has no final plan")
+
+    if (
+        not force
+        and state.prototype_spec is not None
+        and state.prototype_plan_version == state.task.plan_version
+    ):
+        return state.model_dump(mode="json")
+
+    previous_spec = state.prototype_spec
+    previous_version = state.prototype_plan_version
+    state.generation_status.prototype = GenerationDiagnostic(status="pending")
+    save_task_state(state)
+
+    runtime = PMCopilotRuntime()
+    try:
+        result = runtime.prototype_planner.generate(
+            state.task.original_request,
+            state.final_output,
+            state.product_flow,
+        )
+        if result is None:
+            state.prototype_spec = None
+            state.prototype_plan_version = None
+            state.generation_status.prototype = GenerationDiagnostic(status="empty")
+        else:
+            state.prototype_spec = result
+            state.prototype_plan_version = state.task.plan_version
+            state.generation_status.prototype = GenerationDiagnostic(status="completed")
+    except Exception as error:
+        state.prototype_spec = previous_spec
+        state.prototype_plan_version = previous_version
+        state.generation_status.prototype = runtime._failed_diagnostic(error)
+
+    save_task_state(state)
+    return state.model_dump(mode="json")
 
 
 @app.post("/tasks/{task_id}/clarification")

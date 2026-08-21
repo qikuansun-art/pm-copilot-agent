@@ -243,7 +243,6 @@ class PMCopilotRuntime:
         state.analysis = self.product_analyzer.analyze(state)
         state.final_output = self.finalizer.finalize(state)
         self._refresh_product_flow(state)
-        self._refresh_prototype_spec(state)
 
         if state.plan is not None:
             for step in state.plan.steps:
@@ -317,7 +316,6 @@ class PMCopilotRuntime:
         state.task.plan_version = version_from + 1
         state.final_output = revision.revised_plan
         self._refresh_product_flow(state)
-        self._refresh_prototype_spec(state)
         state.task.current_stage = AgentStage.WAITING_REVIEW
         if state.plan is not None and state.plan.steps:
             # A revision reopens only the final step. Normalize stale statuses
@@ -330,9 +328,6 @@ class PMCopilotRuntime:
     def _refresh_product_flow(self, state: AgentState) -> None:
         """Best-effort refresh of the optional flow for the current plan."""
         state.product_flow = None
-        if not state.task.generation_options.generate_flow:
-            self._set_generation_diagnostic(state, "flow", GenerationDiagnostic(status="skipped"))
-            return
         if state.final_output is None:
             self._set_generation_diagnostic(state, "flow", GenerationDiagnostic(status="empty"))
             return

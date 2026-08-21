@@ -22,7 +22,6 @@ const BASE_PROGRESS_STEPS = [
 function progressStepsFor(options) {
   const steps = [...BASE_PROGRESS_STEPS];
   if (options.generate_flow) steps.push(["flow", "业务流程图"]);
-  if (options.generate_prototype) steps.push(["prototype", "交互原型"]);
   return steps.map(([id, label]) => ({ id, label, status: "pending" }));
 }
 
@@ -60,6 +59,11 @@ function App() {
   const [finalOutput, setFinalOutput] = useState(null);
   const [productFlow, setProductFlow] = useState(null);
   const [prototypeSpec, setPrototypeSpec] = useState(null);
+  const [prototypePlanVersion, setPrototypePlanVersion] = useState(null);
+  const [prototypeDiagnostic, setPrototypeDiagnostic] = useState(null);
+  const [prototypeProgress, setPrototypeProgress] = useState(null);
+  const [isGeneratingPrototype, setIsGeneratingPrototype] = useState(false);
+  const [showPrototypeDiagnostic, setShowPrototypeDiagnostic] = useState(false);
   const [generationOptions, setGenerationOptions] = useState(DEFAULT_GENERATION_OPTIONS);
   const [taskProgress, setTaskProgress] = useState(null);
   const [reviewFeedback, setReviewFeedback] = useState("");
@@ -273,6 +277,9 @@ function App() {
       setFinalOutput(state.final_output || null);
       setProductFlow(state.product_flow || null);
       setPrototypeSpec(state.prototype_spec || null);
+      setPrototypePlanVersion(state.prototype_plan_version ?? null);
+      setPrototypeDiagnostic(state.generation_status?.prototype || null);
+      setPrototypeProgress(null);
       setReviewHistory(state.review_feedback || []);
       setPlanVersion(state.task?.plan_version || 1);
       setTaskProgress(restoredProgress(state, restoredOptions));
@@ -318,6 +325,8 @@ function App() {
     const state = await parseResponse(response, "刷新业务流程");
     setProductFlow(state.product_flow || null);
     setPrototypeSpec(state.prototype_spec || null);
+    setPrototypePlanVersion(state.prototype_plan_version ?? null);
+    setPrototypeDiagnostic(state.generation_status?.prototype || null);
   }
 
   function handleUploadFileSelection(event) {
@@ -516,7 +525,6 @@ function App() {
   function finishGeneratedArtifacts(payload) {
     const enabledOptional = [
       ...(generationOptions.generate_flow ? ["flow"] : []),
-      ...(generationOptions.generate_prototype ? ["prototype"] : []),
     ];
     const failed = enabledOptional.filter((id) => {
       const diagnostic = payload.generation_status?.[id];
@@ -539,6 +547,11 @@ function App() {
     setFinalOutput(null);
     setProductFlow(null);
     setPrototypeSpec(null);
+    setPrototypePlanVersion(null);
+    setPrototypeDiagnostic(null);
+    setPrototypeProgress(null);
+    setIsGeneratingPrototype(false);
+    setShowPrototypeDiagnostic(false);
     setGenerationOptions({ ...DEFAULT_GENERATION_OPTIONS });
     setTaskProgress(null);
     setReviewFeedback("");
@@ -635,10 +648,7 @@ function App() {
     const selectedGroupNames = knowledgeGroups
       .filter((group) => selectedKnowledgeGroupIds.includes(group.group_id))
       .map((group) => group.name);
-    const selectedGenerationOptions = { ...generationOptions };
     resetTaskState();
-    setGenerationOptions(selectedGenerationOptions);
-    startProgress(selectedGenerationOptions);
     setIsLoading(true);
     try {
       const response = await fetch(`${API_BASE_URL}/tasks`, {
@@ -648,7 +658,6 @@ function App() {
           title: "产品规划任务",
           request: normalizedRequest,
           knowledge_group_ids: selectedKnowledgeGroupIds,
-          generation_options: selectedGenerationOptions,
         }),
       });
       const payload = await parseResponse(response, "需求理解");
@@ -661,9 +670,8 @@ function App() {
         knowledge_group_ids: payload.knowledge_group_ids || selectedKnowledgeGroupIds,
         knowledge_group_names: selectedGroupNames,
         plan_version: payload.plan_version || 1,
-        generation_options: payload.generation_options || selectedGenerationOptions,
+        generation_options: payload.generation_options,
       });
-      setGenerationOptions(payload.generation_options || selectedGenerationOptions);
       setPlanVersion(payload.plan_version || 1);
       setSubmittedRequest(normalizedRequest);
       advanceProgress(["understanding"], "clarification");
@@ -818,6 +826,39 @@ function App() {
     }
   }
 
+  async function handleGeneratePrototype(force = false) {
+    if (!task?.task_id || !finalOutput || isGeneratingPrototype) return;
+    setIsGeneratingPrototype(true);
+    setShowPrototypeDiagnostic(false);
+    setPrototypeProgress({ percent: 0, label: "准备生成" });
+    try {
+      setPrototypeProgress({ percent: 50, label: "正在生成交互原型" });
+      const response = await fetch(
+        `${API_BASE_URL}/tasks/${task.task_id}/prototype/generate${force ? "?force=true" : ""}`,
+        { method: "POST" },
+      );
+      const state = await parseResponse(response, "生成交互原型");
+      setPrototypeSpec(state.prototype_spec || null);
+      setPrototypePlanVersion(state.prototype_plan_version ?? null);
+      setPrototypeDiagnostic(state.generation_status?.prototype || null);
+      setPrototypeProgress(state.generation_status?.prototype?.status === "failed" ? null : { percent: 100, label: "生成完成" });
+      await loadTaskHistory();
+    } catch (requestError) {
+      try {
+        const response = await fetch(`${API_BASE_URL}/tasks/${task.task_id}`, { cache: "no-store" });
+        const state = await parseResponse(response, "刷新原型状态");
+        setPrototypeSpec(state.prototype_spec || null);
+        setPrototypePlanVersion(state.prototype_plan_version ?? null);
+        setPrototypeDiagnostic(state.generation_status?.prototype || null);
+      } catch {
+        setPrototypeDiagnostic({ status: "failed", error_type: "RequestError", message: requestError instanceof Error ? requestError.message : "原型生成失败", details: [] });
+      }
+      setPrototypeProgress(null);
+    } finally {
+      setIsGeneratingPrototype(false);
+    }
+  }
+
   async function handleClarificationSubmit() {
     const answer = reply.trim();
     if (!answer) {
@@ -897,6 +938,32 @@ function App() {
     return value ? <p>{value}</p> : <div className="workspace-empty compact">{emptyText}</div>;
   }
 
+  function visibleAgentPlanSteps() {
+    const fallback = BASE_PROGRESS_STEPS.map(([id, label], index) => {
+      let status = "pending";
+      if (task?.current_stage === "WAITING_CLARIFICATION") {
+        status = index === 0 ? "completed" : index === 1 ? "running" : "pending";
+      } else if (index === 0 && task) {
+        status = "running";
+      }
+      return { id, title: label, status };
+    });
+    const steps = [...(generatedPlan?.steps || fallback)];
+    const flowStatus = productFlow
+      ? "completed"
+      : finalOutput
+        ? null
+        : automationStage === "analysis"
+          ? "running"
+          : task
+            ? "pending"
+            : null;
+    if (flowStatus && !steps.some((step) => step.id === "flow" || step.title === "业务流程图")) {
+      steps.push({ id: "flow", title: "业务流程图", status: flowStatus });
+    }
+    return steps;
+  }
+
   function renderFinalPlan() {
     if (!finalOutput) return <div className="workspace-empty">完成 Human Review 后将在这里生成最终方案。</div>;
     const fields = [
@@ -910,14 +977,16 @@ function App() {
       <>
         {task?.task_id && (
           <div className="final-plan-actions">
-            {generationOptions.generate_report && <button type="button" onClick={() => window.open(`${API_BASE_URL}/tasks/${task.task_id}/report/html`, "_blank", "noopener,noreferrer")}>查看方案报告</button>}
-            {generationOptions.generate_prototype && prototypeSpec && <button type="button" onClick={() => window.open(`${API_BASE_URL}/tasks/${task.task_id}/prototype/html`, "_blank", "noopener,noreferrer")}>查看交互原型</button>}
+            <button type="button" onClick={() => window.open(`${API_BASE_URL}/tasks/${task.task_id}/report/html`, "_blank", "noopener,noreferrer")}>查看方案报告</button>
+            {!prototypeSpec && <button type="button" onClick={() => handleGeneratePrototype(false)} disabled={isGeneratingPrototype}>{isGeneratingPrototype ? "生成中..." : "生成交互原型"}</button>}
+            {prototypeSpec && <button type="button" onClick={() => window.open(`${API_BASE_URL}/tasks/${task.task_id}/prototype/html`, "_blank", "noopener,noreferrer")}>{prototypePlanVersion != null && prototypePlanVersion < planVersion ? "查看旧原型" : "查看交互原型"}</button>}
+            {prototypeSpec && <button type="button" onClick={() => handleGeneratePrototype(true)} disabled={isGeneratingPrototype}>{isGeneratingPrototype ? "生成中..." : prototypePlanVersion != null && prototypePlanVersion < planVersion ? `基于 V${planVersion} 重新生成` : "重新生成"}</button>}
           </div>
         )}
         <div className="final-plan">{fields.map(([key, label]) => (
           <div className={`final-plan-block ${key === "solution" ? "solution-with-flow" : ""}`} key={key}>
             <section><h3>{label}</h3>{renderFinalValue(finalOutput[key])}</section>
-            {key === "solution" && generationOptions.generate_flow && productFlow && <BusinessFlowCard flow={productFlow} />}
+            {key === "solution" && productFlow && <BusinessFlowCard flow={productFlow} />}
           </div>
         ))}</div>
       </>
@@ -1208,7 +1277,7 @@ function App() {
               placeholder="例如：帮我规划一个石材荒料加工管理功能"
               disabled={isBusy}
             />
-            {(!task || task.current_stage === "COMPLETED") && (
+            {false && (!task || task.current_stage === "COMPLETED") && (
               <div className="task-knowledge-selector">
                 <div className="task-knowledge-heading">
                   <span>参考项目资料</span>
@@ -1238,50 +1307,6 @@ function App() {
                     : "未选择时，Agent 将搜索全部内部知识。"}
                 </small>
               </div>
-            )}
-            {(!task || task.current_stage === "COMPLETED") && (
-              <div className="generation-options">
-                <strong>生成内容</strong>
-                <small>产品方案始终生成；可按需选择附加内容。</small>
-                {[
-                  ["generate_flow", "业务流程图", "自动提取主要业务流程"],
-                  ["generate_prototype", "交互原型", "生成可点击 HTML Demo · 生成时间较长"],
-                  ["generate_report", "HTML 方案报告", "生成独立产品方案页面"],
-                ].map(([key, label, description]) => (
-                  <label key={key}>
-                    <input
-                      type="checkbox"
-                      checked={generationOptions[key]}
-                      disabled={isBusy || Boolean(task)}
-                      onChange={(event) => setGenerationOptions((current) => ({ ...current, [key]: event.target.checked }))}
-                    />
-                    <span><b>{label}</b><em>{description}</em></span>
-                  </label>
-                ))}
-              </div>
-            )}
-            {taskProgress && (
-              <section className="task-progress" aria-label="任务生成进度">
-                {(() => {
-                  const completed = taskProgress.steps.filter((step) => ["completed", "failed"].includes(step.status)).length;
-                  const percent = Math.round((completed / taskProgress.steps.length) * 100);
-                  const current = taskProgress.steps.find((step) => step.id === taskProgress.currentStep);
-                  return (
-                    <>
-                      <div className="task-progress-heading"><strong>{percent === 100 ? "✓ 方案生成完成" : "正在生成方案"}</strong><span>{percent}%</span></div>
-                      <div className="task-progress-track"><i style={{ width: `${percent}%` }} /></div>
-                      <p>{current?.id === "clarification" && task?.current_stage === "WAITING_CLARIFICATION" ? "等待你补充信息" : current ? `当前：正在进行${current.label}...` : "全部所选内容已处理"}</p>
-                      <div className="task-progress-steps">
-                        {taskProgress.steps.map((step) => (
-                          <span className={step.status} key={step.id}>
-                            <i>{step.status === "completed" ? "✓" : step.status === "failed" ? "⚠" : step.status === "running" ? "●" : "○"}</i>{step.label}{step.status === "failed" ? " · 生成失败" : ""}
-                          </span>
-                        ))}
-                      </div>
-                    </>
-                  );
-                })()}
-              </section>
             )}
             <div className="conversation">
               {!task && !isLoading && <div className="conversation-empty">输入产品需求，Agent 将从需求理解和澄清开始工作。</div>}
@@ -1348,11 +1373,12 @@ function App() {
 
           <aside className="card plan-panel">
             <div className="section-heading"><span>EXECUTION PLAN</span><h2>Agent Plan</h2></div>
-            {generatedPlan ? (
+            {(generatedPlan || task) ? (
               <>
-                <p className="plan-goal">{generatedPlan.goal}</p>
+                <p className="plan-goal">{generatedPlan?.goal || "完成需求澄清后生成产品方案"}</p>
+                {task?.current_stage === "WAITING_CLARIFICATION" && <p className="plan-waiting-note">等待你补充信息</p>}
                 <div className="plan-list">
-                  {generatedPlan.steps.map((step, index) => (
+                  {visibleAgentPlanSteps().map((step, index) => (
                     <div className={`plan-step ${step.status}`} key={step.id}>
                       <div className="step-marker">{step.status === "completed" ? "✓" : index + 1}</div>
                       <div><strong>{step.title}</strong><span>{step.status}</span></div>
@@ -1363,6 +1389,24 @@ function App() {
               </>
             ) : (
               <div className="plan-empty"><div className="plan-empty-icon" aria-hidden="true">◇</div><p>任务开始后，Agent 会在这里生成执行计划。</p></div>
+            )}
+            {(isGeneratingPrototype || prototypeSpec || prototypeDiagnostic?.status === "failed") && (
+              <section className="plan-artifacts">
+                <div className="plan-artifacts-heading">附加产物</div>
+                <div className={`plan-artifact ${prototypeDiagnostic?.status === "failed" ? "failed" : prototypeSpec && prototypePlanVersion != null && prototypePlanVersion < planVersion ? "stale" : ""}`}>
+                  <span className="artifact-marker">{prototypeDiagnostic?.status === "failed" || (prototypeSpec && prototypePlanVersion != null && prototypePlanVersion < planVersion) ? "⚠" : prototypeSpec ? "✓" : "●"}</span>
+                  <div>
+                    <strong>交互原型</strong>
+                    {isGeneratingPrototype && <p>正在生成... · {prototypeProgress?.percent ?? 50}%</p>}
+                    {!isGeneratingPrototype && prototypeSpec && prototypePlanVersion === planVersion && <p>已生成 · 基于方案 V{prototypePlanVersion}</p>}
+                    {!isGeneratingPrototype && prototypeSpec && prototypePlanVersion != null && prototypePlanVersion < planVersion && <p>基于方案 V{prototypePlanVersion} · 当前方案 V{planVersion}</p>}
+                    {!isGeneratingPrototype && prototypeSpec && prototypePlanVersion == null && <p>已生成 · 版本信息不可用</p>}
+                    {!isGeneratingPrototype && prototypeDiagnostic?.status === "failed" && <p>生成失败</p>}
+                    {prototypeDiagnostic?.status === "failed" && <button type="button" onClick={() => setShowPrototypeDiagnostic((value) => !value)}>查看原因</button>}
+                    {showPrototypeDiagnostic && prototypeDiagnostic?.status === "failed" && <div className="artifact-diagnostic"><b>{prototypeDiagnostic.error_type || "GenerationError"}</b><p>{prototypeDiagnostic.message || "原型生成失败"}</p>{prototypeDiagnostic.details?.map((detail) => <small key={detail}>{detail}</small>)}</div>}
+                  </div>
+                </div>
+              </section>
             )}
           </aside>
         </section>

@@ -87,11 +87,12 @@ def state(options: GenerationOptions, stage: AgentStage = AgentStage.ANALYZING) 
 
 
 def main() -> None:
-    # Case A: core plan only.
+    # Case A: the legacy Flow option is ignored; AI still decides the outcome.
     instance, flow_generator, prototype_planner = runtime()
     core_only = instance.run_product_analysis(state(GenerationOptions(generate_flow=False)))
     assert core_only.final_output is not None
-    assert flow_generator.calls == 0 and prototype_planner.calls == 0
+    assert core_only.product_flow is not None
+    assert flow_generator.calls == 1 and prototype_planner.calls == 0
 
     # Case B: core plan plus flow.
     instance, flow_generator, prototype_planner = runtime()
@@ -99,18 +100,18 @@ def main() -> None:
     assert with_flow.product_flow is not None
     assert flow_generator.calls == 1 and prototype_planner.calls == 0
 
-    # Case C: prototype can be selected independently.
+    # Case C: the legacy prototype option no longer affects the main workflow.
     instance, flow_generator, prototype_planner = runtime()
     with_prototype = instance.run_product_analysis(state(GenerationOptions(generate_flow=False, generate_prototype=True)))
-    assert with_prototype.prototype_spec is not None
-    assert flow_generator.calls == 0 and prototype_planner.calls == 1
+    assert with_prototype.prototype_spec is None
+    assert flow_generator.calls == 1 and prototype_planner.calls == 0
 
     # Case D: all optional capabilities are available; report remains on demand.
     instance, flow_generator, prototype_planner = runtime()
     all_enabled = instance.run_product_analysis(state(GenerationOptions(generate_flow=True, generate_prototype=True, generate_report=True)))
-    assert all_enabled.product_flow is not None and all_enabled.prototype_spec is not None
+    assert all_enabled.product_flow is not None and all_enabled.prototype_spec is None
     assert all_enabled.task.generation_options.generate_report is True
-    assert flow_generator.calls == 1 and prototype_planner.calls == 1
+    assert flow_generator.calls == 1 and prototype_planner.calls == 0
 
     # Case E: revision regenerates only enabled artifacts.
     instance, flow_generator, prototype_planner = runtime()
@@ -133,10 +134,10 @@ def main() -> None:
     assert degraded.final_output is not None and degraded.product_flow is None
     assert instance.last_generation_status["flow"] == "failed"
 
-    print("Case A: Final Plan only skipped Flow and Prototype")
+    print("Case A: legacy Flow option did not disable automatic Flow judgment")
     print("Case B: Flow generated without Prototype")
-    print("Case C: Prototype generated independently")
-    print("Case D: all enabled artifacts generated; Report remains on demand")
+    print("Case C: legacy Prototype option did not run the planner")
+    print("Case D: Flow generated while Prototype remained on demand")
     print("Case E: Review Revision regenerated enabled artifacts only")
     print("Case F: Legacy Task restored default GenerationOptions")
     print("Optional artifact failure: degraded without blocking Final Plan")

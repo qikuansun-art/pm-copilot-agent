@@ -110,9 +110,9 @@ def main() -> None:
     assert validation.message == "Invalid prototype plan response"
     assert any(item.startswith("roles.0.id:") and "Field required" in item for item in validation.details)
 
-    # Flow uses the same structured status and respects its disabled option.
+    # Flow uses the same structured status; its legacy option no longer disables it.
     validation_runtime._refresh_product_flow(validation_failed)
-    assert validation_failed.generation_status.flow.status == "skipped"
+    assert validation_failed.generation_status.flow.status == "failed"
 
     # Case F: complete diagnostics survive SQLite store recreation.
     db_path = Path("data/test_generation_diagnostics.db")

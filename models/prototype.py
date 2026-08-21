@@ -1,8 +1,60 @@
 """Structured interaction-prototype planning models."""
 
-from typing import Literal
+from typing import Any, Literal
 
 from pydantic import BaseModel, Field, model_validator
+
+
+class PrototypeCondition(BaseModel):
+    """One structured comparison used to control prototype behavior."""
+
+    field: str
+    operator: Literal[
+        "equals",
+        "not_equals",
+        "in",
+        "not_in",
+        "exists",
+        "not_exists",
+        "greater_than",
+        "less_than",
+        "greater_than_or_equal",
+        "less_than_or_equal",
+    ]
+    value: Any | None = None
+    value_field: str | None = None
+
+    @model_validator(mode="after")
+    def validate_operands(self) -> "PrototypeCondition":
+        """Reject ambiguous operands and obvious operator/type mismatches."""
+        has_value = "value" in self.model_fields_set
+        has_value_field = self.value_field is not None
+        if has_value and has_value_field:
+            raise ValueError("Prototype conditions cannot use value and value_field together")
+        if self.operator in {"exists", "not_exists"}:
+            if has_value_field or (has_value and self.value is not None):
+                raise ValueError("Prototype existence conditions do not accept an operand")
+            return self
+        if not has_value and not has_value_field:
+            raise ValueError("Prototype conditions require value or value_field")
+        if self.operator in {"in", "not_in"}:
+            if has_value_field or not isinstance(self.value, list):
+                raise ValueError("Prototype in conditions require a list value")
+        if (
+            self.operator
+            in {"greater_than", "less_than", "greater_than_or_equal", "less_than_or_equal"}
+            and not has_value_field
+            and (isinstance(self.value, bool) or not isinstance(self.value, (int, float)))
+        ):
+            raise ValueError("Prototype comparison conditions require a numeric value or value_field")
+        return self
+
+
+class PrototypeConditionGroup(BaseModel):
+    """Combines one flat list of conditions with AND or OR logic."""
+
+    logic: Literal["and", "or"] = "and"
+    conditions: list[PrototypeCondition] = Field(default_factory=list)
 
 
 class PrototypeAction(BaseModel):
@@ -24,6 +76,8 @@ class PrototypeAction(BaseModel):
     ]
     target: str | None = None
     visible_to_roles: list[str] = Field(default_factory=list)
+    visible_when: PrototypeConditionGroup | None = None
+    enabled_when: PrototypeConditionGroup | None = None
 
 
 class PrototypeField(BaseModel):
@@ -34,6 +88,28 @@ class PrototypeField(BaseModel):
     field_type: Literal["text", "textarea", "select", "number", "date"]
     required: bool = False
     options: list[str] = Field(default_factory=list)
+    data_source: str | None = None
+    option_label_field: str | None = None
+    option_value_field: str | None = None
+    visible_when: PrototypeConditionGroup | None = None
+    required_when: PrototypeConditionGroup | None = None
+    enabled_when: PrototypeConditionGroup | None = None
+
+
+class PrototypeEntityType(BaseModel):
+    """A lightweight reference-data shape used only by the prototype."""
+
+    id: str
+    name: str
+    fields: list[str] = Field(default_factory=list)
+
+
+class PrototypeEntityRecord(BaseModel):
+    """One stable mock record embedded in a PrototypeSpec."""
+
+    id: str
+    entity_type: str
+    data: dict[str, Any] = Field(default_factory=dict)
 
 
 class PrototypeRole(BaseModel):
@@ -95,6 +171,7 @@ class PrototypePanel(BaseModel):
     panel_type: Literal["modal", "drawer"]
     fields: list[PrototypeField] = Field(default_factory=list)
     actions: list[PrototypeAction] = Field(default_factory=list)
+    visible_when: PrototypeConditionGroup | None = None
 
 
 class PrototypeStatusTransition(BaseModel):
@@ -103,6 +180,60 @@ class PrototypeStatusTransition(BaseModel):
     from_status: str
     action_id: str
     to_status: str
+
+
+class PrototypeLayout(BaseModel):
+    """Places the major blocks of one page into a lightweight layout."""
+
+    layout_type: Literal[
+        "single_column",
+        "two_column",
+        "sidebar_detail",
+        "dashboard_grid",
+    ]
+    left_width: int | None = None
+    right_width: int | None = None
+
+
+class PrototypeComponent(BaseModel):
+    """References and arranges an existing page-level content block."""
+
+    id: str
+    component_type: Literal[
+        "cards", "table", "form", "detail", "tabs", "alert", "timeline", "text", "actions"
+    ]
+    title: str = ""
+    description: str = ""
+    order: int = 0
+    region: Literal["main", "left", "right", "top", "bottom"] = "main"
+    visible_to_roles: list[str] = Field(default_factory=list)
+    visible_when: PrototypeConditionGroup | None = None
+
+
+class PrototypeDetailSection(BaseModel):
+    """Groups related detail fields without duplicating their business data."""
+
+    id: str
+    title: str
+    fields: list[str] = Field(default_factory=list)
+    order: int = 0
+
+
+class PrototypeTimelineItem(BaseModel):
+    """One display-only event in a page timeline."""
+
+    id: str
+    title: str
+    description: str
+    status: str = ""
+
+
+class PrototypeAlert(BaseModel):
+    """One lightweight page-level business notice."""
+
+    id: str
+    message: str
+    alert_type: Literal["info", "success", "warning", "error"]
 
 
 class PrototypePage(BaseModel):
@@ -118,6 +249,12 @@ class PrototypePage(BaseModel):
     table: PrototypeTable | None = None
     tabs: list[PrototypeTab] = Field(default_factory=list)
     cards: list[PrototypeCard] = Field(default_factory=list)
+    layout: PrototypeLayout | None = None
+    components: list[PrototypeComponent] = Field(default_factory=list)
+    detail_sections: list[PrototypeDetailSection] = Field(default_factory=list)
+    timeline_items: list[PrototypeTimelineItem] = Field(default_factory=list)
+    alerts: list[PrototypeAlert] = Field(default_factory=list)
+    visible_when: PrototypeConditionGroup | None = None
 
 
 class PrototypeSpec(BaseModel):
@@ -132,6 +269,8 @@ class PrototypeSpec(BaseModel):
     panels: list[PrototypePanel] = Field(default_factory=list)
     statuses: list[str] = Field(default_factory=list)
     status_transitions: list[PrototypeStatusTransition] = Field(default_factory=list)
+    entity_types: list[PrototypeEntityType] = Field(default_factory=list)
+    entity_records: list[PrototypeEntityRecord] = Field(default_factory=list)
 
     @model_validator(mode="after")
     def validate_navigation(self) -> "PrototypeSpec":
@@ -155,6 +294,34 @@ class PrototypeSpec(BaseModel):
             raise ValueError("Prototype panel IDs must be unique")
         known_panels = {panel.id: panel for panel in self.panels}
 
+        entity_type_ids = [entity.id for entity in self.entity_types]
+        if len(entity_type_ids) != len(set(entity_type_ids)):
+            raise ValueError("Prototype entity type IDs must be unique")
+        known_entity_types = {entity.id: entity for entity in self.entity_types}
+        entity_record_ids = [record.id for record in self.entity_records]
+        if len(entity_record_ids) != len(set(entity_record_ids)):
+            raise ValueError("Prototype entity record IDs must be unique")
+        for record in self.entity_records:
+            if record.entity_type not in known_entity_types:
+                raise ValueError("Prototype entity records must reference an entity type")
+
+        all_fields = [
+            field for page in self.pages for field in page.fields
+        ] + [
+            field for panel in self.panels for field in panel.fields
+        ]
+        for field in all_fields:
+            if field.data_source is None:
+                continue
+            entity_type = known_entity_types.get(field.data_source)
+            if entity_type is None:
+                raise ValueError("Prototype field data_source must reference an entity type")
+            available_fields = {"id", *entity_type.fields}
+            if field.option_label_field and field.option_label_field not in available_fields:
+                raise ValueError("Prototype option_label_field must reference an entity field")
+            if field.option_value_field and field.option_value_field not in available_fields:
+                raise ValueError("Prototype option_value_field must reference an entity field")
+
         page_actions = [action for page in self.pages for action in page.actions]
         row_actions = [
             action
@@ -176,10 +343,74 @@ class PrototypeSpec(BaseModel):
                 (page.cards, "card"),
                 (page.table.columns if page.table else [], "table column"),
                 (page.table.filters if page.table else [], "filter"),
+                (page.components, "component"),
+                (page.detail_sections, "detail section"),
+                (page.timeline_items, "timeline item"),
+                (page.alerts, "alert"),
             ):
                 ids = [item.id for item in collection]
                 if len(ids) != len(set(ids)):
                     raise ValueError(f"Prototype {label} IDs must be unique per page")
+            if len(page.components) > 15:
+                raise ValueError("Prototype pages support at most 15 components")
+            for component in page.components:
+                if not set(component.visible_to_roles) <= known_role_ids:
+                    raise ValueError("Prototype component roles must reference a role")
+
+        known_fields = {
+            field.id for page in self.pages for field in page.fields
+        } | {
+            field.id for panel in self.panels for field in panel.fields
+        } | {
+            column.field
+            for page in self.pages
+            if page.table is not None
+            for column in page.table.columns
+        }
+        for page in self.pages:
+            for section in page.detail_sections:
+                if not set(section.fields) <= known_fields:
+                    raise ValueError("Prototype detail sections must reference a field")
+
+        condition_groups: list[PrototypeConditionGroup] = []
+        for page in self.pages:
+            condition_groups.extend(group for group in [page.visible_when] if group)
+            for component in page.components:
+                condition_groups.extend(group for group in [component.visible_when] if group)
+            for field in page.fields:
+                condition_groups.extend(
+                    group
+                    for group in [field.visible_when, field.required_when, field.enabled_when]
+                    if group
+                )
+            for action in page.actions:
+                condition_groups.extend(
+                    group for group in [action.visible_when, action.enabled_when] if group
+                )
+            if page.table is not None:
+                for action in page.table.row_actions:
+                    condition_groups.extend(
+                        group for group in [action.visible_when, action.enabled_when] if group
+                    )
+        for panel in self.panels:
+            condition_groups.extend(group for group in [panel.visible_when] if group)
+            for field in panel.fields:
+                condition_groups.extend(
+                    group
+                    for group in [field.visible_when, field.required_when, field.enabled_when]
+                    if group
+                )
+            for action in panel.actions:
+                condition_groups.extend(
+                    group for group in [action.visible_when, action.enabled_when] if group
+                )
+
+        for group in condition_groups:
+            for condition in group.conditions:
+                if condition.field not in {"role", "status"} | known_fields:
+                    raise ValueError("Prototype condition fields must reference a field")
+                if condition.value_field is not None and condition.value_field not in known_fields:
+                    raise ValueError("Prototype condition value_field must reference a field")
 
         for action in all_actions:
             if not set(action.visible_to_roles) <= known_role_ids:
