@@ -6,11 +6,14 @@ from pathlib import Path
 
 from models.state import AgentState, normalize_agent_state
 
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
+DEFAULT_TASK_DB_PATH = PROJECT_ROOT / "data" / "tasks.db"
+
 
 class TaskStore:
     """Persists each AgentState as JSON in a lightweight SQLite table."""
 
-    def __init__(self, db_path: str | Path = "data/tasks.db") -> None:
+    def __init__(self, db_path: str | Path = DEFAULT_TASK_DB_PATH) -> None:
         self.db_path = Path(db_path)
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
         connection = self._connect()

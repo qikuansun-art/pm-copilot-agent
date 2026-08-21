@@ -6,11 +6,14 @@ from uuid import uuid4
 
 from models.knowledge import DocumentRecord, KnowledgeChunk, KnowledgeGroup
 
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
+DEFAULT_KNOWLEDGE_DB_PATH = PROJECT_ROOT / "data" / "knowledge.db"
+
 
 class DocumentStore:
     """Persists uploaded-document metadata and chunks in a local SQLite file."""
 
-    def __init__(self, db_path: str | Path = "data/knowledge.db") -> None:
+    def __init__(self, db_path: str | Path = DEFAULT_KNOWLEDGE_DB_PATH) -> None:
         """Initialize the database path and create the required tables."""
         self.db_path = Path(db_path)
         self.db_path.parent.mkdir(parents=True, exist_ok=True)

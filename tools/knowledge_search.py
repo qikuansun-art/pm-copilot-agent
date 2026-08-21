@@ -5,11 +5,14 @@ from pathlib import Path
 from knowledge.document_store import document_store
 from models.knowledge import KnowledgeSearchResult
 
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
+DEFAULT_KNOWLEDGE_DIR = PROJECT_ROOT / "knowledge"
+
 
 class KnowledgeSearchTool:
     """Searches built-in Markdown and uploaded document chunks."""
 
-    def __init__(self, knowledge_dir: str = "knowledge") -> None:
+    def __init__(self, knowledge_dir: str | Path = DEFAULT_KNOWLEDGE_DIR) -> None:
         """Initialize the tool with the directory containing knowledge files."""
         self.knowledge_dir = Path(knowledge_dir)
 
